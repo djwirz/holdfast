@@ -22,7 +22,7 @@ Holdfast is a small auction site that makes both true at bid time. A bid counts 
 That sequence is the README GIF and the case study.
 
 ### Why this is worth building (portfolio framing)
-It shows TypeScript and Node.js on a real server, PostgreSQL transactions and locking done deliberately, Stripe's authorization-and-capture model (holds, idempotency, webhooks, reconciliation), real-time fan-out across instances with Redis, E2E tests with Playwright, a load test that checks correctness and not just throughput, and distributed tracing. It mirrors, using public patterns only, the hold-backed real-time bidding of Dan's HYP work.
+It shows TypeScript and Node.js on a real server, PostgreSQL transactions and locking done deliberately, Stripe's authorization-and-capture model (holds, idempotency, webhooks, reconciliation), real-time fan-out across instances with Redis, E2E tests with Playwright, a load test that checks correctness and not just throughput, and distributed tracing. The design draws only on public patterns for hold-backed real-time bidding.
 
 ## 2. Non-goals (v1)
 
@@ -218,4 +218,4 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 3. **Demo access.** Open GitHub sign-in for anyone (it's test mode, so the only cost is abuse) or a passcode gate like Token Keeper's? Recommendation: open, with rate limits, and the ability to switch to a passcode if it's abused. Decide by slice 4.
 4. **Pace of auctions in the demo.** One always-running auction that restarts every few minutes, or a seed script for each demo? Decide by slice 7.
 5. **Skills check.** Confirm the "proves" list against `resume-score.json` once kit step 1 has run (build-plan backlog).
-6. **Case-study angle.** How much of the HYP comparison is safe to say? Public patterns only. Decide in slice 7.
+6. **Case-study angle.** How much comparison to past professional work is safe to make? Public patterns only, no employer names. Decide in slice 7.

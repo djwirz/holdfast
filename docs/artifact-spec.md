@@ -49,7 +49,7 @@ Provisional: kit step 1 (`resume-score.json` from saved postings) hasn't run yet
 - **Time:** two to three focused weeks.
 - **Budget:** free tiers first; a budget alarm on the host before deploying.
 - **Data:** synthetic auctions and Stripe test cards only.
-- **Privacy:** no employer details. The HYP story stays at the level of public patterns.
+- **Privacy:** no employer details. Any comparison to past work stays at the level of public patterns, with no employer names.
 - **Rate limits:** Stripe test mode has lower rate limits than live, so large load runs use a Stripe fake with real-world latency and failures injected (ADR 0006).
 
 ## Quality plan
