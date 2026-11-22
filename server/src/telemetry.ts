@@ -10,8 +10,11 @@ if (endpoint) {
   // ESM modules can only be instrumented through Node's module hooks, registered before
   // they're imported: that's why this file loads first and imports the SDK dynamically.
   // In-thread hooks (module.registerHooks), not the deprecated module.register.
+  // Not http and https: everything that uses them here (Fastify, the Stripe SDK) is CommonJS
+  // and gets patched through require. Hooking them on the ESM side too wrapped https twice,
+  // so every Stripe call showed as two nested client spans.
   const { register } = await import('import-in-the-middle/register-hooks.mjs');
-  register();
+  register({ exclude: ['http', 'https', 'node:http', 'node:https'] });
 
   const [
     { NodeSDK },
@@ -57,6 +60,9 @@ if (endpoint) {
       new HttpInstrumentation({
         // Health checks and SSE heartbeats would drown out the bids.
         ignoreIncomingRequestHook: (req) => req.url === '/api/healthz',
+        // The sampler lists the provider's holds every 30 seconds on each replica; outside an
+        // operation that's a trace of its own each time. Calls inside a bid still get spans.
+        requireParentforOutgoingSpans: true,
       }),
       // Only inside a traced operation. The background loops poll Postgres several times a
       // second on every replica; tracing each poll would be gigabytes a day of nothing,
