@@ -14,6 +14,7 @@
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
+    "test:live": "STRIPE_LIVE_TEST=1 vitest run --project live",
     "db:generate": "pnpm --filter @holdfast/server db:generate",
     "db:migrate": "pnpm --filter @holdfast/server db:migrate",
     "seed": "pnpm --filter @holdfast/server seed"

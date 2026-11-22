@@ -13,9 +13,12 @@ export interface Violation {
   message: string;
 }
 
-/** Extra evidence only the fake can give: how often each key was sent to authorize. */
+/**
+ * Every intent the provider holds for the bids being checked, including ones the database
+ * never recorded (a second hold from a duplicated request). The fake keeps them; for
+ * Stripe, `stripeAudit` lists them by customer.
+ */
 export interface PaymentsAudit {
-  callsByKey: ReadonlyMap<string, number>;
   intents: ReadonlyMap<string, PaymentIntentView>;
 }
 

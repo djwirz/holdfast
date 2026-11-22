@@ -22,6 +22,19 @@ export default defineConfig({
           testTimeout: 30_000,
         },
       },
+      {
+        // Real Stripe test mode, by hand only (spec §10): `pnpm test:live`. Skips unless
+        // STRIPE_LIVE_TEST=1 and .env.local has a test-mode STRIPE_SECRET_KEY.
+        test: {
+          name: 'live',
+          include: ['server/test/live/**/*.live.ts'],
+          setupFiles: ['server/test/live/env.ts'],
+          globalSetup: ['server/test/support/global-setup.ts'],
+          fileParallelism: false,
+          hookTimeout: 120_000,
+          testTimeout: 120_000,
+        },
+      },
     ],
   },
 });

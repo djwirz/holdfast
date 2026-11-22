@@ -17,7 +17,13 @@ export type Decision =
   /** Nothing happened, and the caller can't tell: a timeout before Stripe acted. */
   | { error: 'transient' }
   /** The hold was placed, then the response was lost (spec §7). A retry finds it. */
-  | { error: 'after_authorize' };
+  | { error: 'after_authorize' }
+  /**
+   * A 500 from the provider. Stripe saves it and replays it for the same key for at least
+   * 24 hours, so a retry can't find the hold through the key. `created` says whether a hold
+   * was placed before the error.
+   */
+  | { error: 'server_error'; created: boolean };
 
 export type EffectFault =
   undefined | { retryable: true; reason: string } | { retryable: false; reason: string };
@@ -30,7 +36,10 @@ export interface FakePaymentsOptions {
   effectFault?: (op: 'cancel' | 'capture', paymentIntentId: string) => EffectFault;
 }
 
-type Settled = { kind: 'result'; result: AuthorizeResult } | { kind: 'intent'; id: string };
+type Settled =
+  | { kind: 'result'; result: AuthorizeResult }
+  | { kind: 'intent'; id: string }
+  | { kind: 'server_error' };
 
 export class FakePayments implements Payments {
   readonly intents = new Map<string, PaymentIntentView>();
@@ -41,7 +50,7 @@ export class FakePayments implements Payments {
   readonly captureCalls = new Map<string, number>();
   /** Like Stripe's idempotency keys: the first completed outcome per key is replayed. */
   private readonly settled = new Map<string, Settled>();
-  private readonly inFlight = new Map<string, Promise<AuthorizeResult>>();
+  private readonly inFlight = new Set<string>();
   private readonly latency: (req: AuthorizeRequest) => number;
   private readonly decide: (req: AuthorizeRequest) => Decision;
   private readonly effectFault: NonNullable<FakePaymentsOptions['effectFault']>;
@@ -55,16 +64,19 @@ export class FakePayments implements Payments {
   authorize(req: AuthorizeRequest): Promise<AuthorizeResult> {
     bump(this.callsByKey, req.idempotencyKey);
     const done = this.settled.get(req.idempotencyKey);
-    if (done) return Promise.resolve(this.replay(done));
-    const running = this.inFlight.get(req.idempotencyKey);
-    if (running) return running;
-    const result = this.run(req).finally(() => this.inFlight.delete(req.idempotencyKey));
-    this.inFlight.set(req.idempotencyKey, result);
-    return result;
+    if (done) return Promise.resolve(this.replay(done, req));
+    if (this.inFlight.has(req.idempotencyKey)) {
+      // Stripe refuses a second request while the first with that key is still running
+      // (409 idempotency_key_in_use) and saves nothing for it, so a later retry can succeed.
+      return Promise.reject(new TransientPaymentsError('fake: idempotency_key_in_use'));
+    }
+    this.inFlight.add(req.idempotencyKey);
+    return this.run(req).finally(() => this.inFlight.delete(req.idempotencyKey));
   }
 
-  private replay(done: Settled): AuthorizeResult {
+  private replay(done: Settled, req: AuthorizeRequest): AuthorizeResult {
     if (done.kind === 'result') return done.result;
+    if (done.kind === 'server_error') return this.recoverFromServerError(req);
     const intent = this.intents.get(done.id);
     if (!intent) throw new Error(`fake lost intent ${done.id}`);
     return {
@@ -88,15 +100,12 @@ export class FakePayments implements Payments {
       this.settled.set(req.idempotencyKey, { kind: 'result', result });
       return result;
     }
-    // Globally unique, like Stripe's ids: fakes in different tests share one database.
-    const id = `pi_fake_${randomUUID().replaceAll('-', '')}`;
-    this.intents.set(id, {
-      id,
-      amount: req.amount,
-      amountCapturable: req.amount,
-      status: 'requires_capture',
-      metadata: req.metadata,
-    });
+    if ('error' in decision && decision.error === 'server_error') {
+      if (decision.created) this.createIntent(req);
+      this.settled.set(req.idempotencyKey, { kind: 'server_error' });
+      return this.recoverFromServerError(req);
+    }
+    const id = this.createIntent(req);
     this.settled.set(req.idempotencyKey, { kind: 'intent', id });
     if ('error' in decision) {
       throw new TransientPaymentsError('fake: authorized, then the response was lost');
@@ -107,6 +116,38 @@ export class FakePayments implements Payments {
       status: 'requires_capture',
       amountCapturable: req.amount,
     };
+  }
+
+  private createIntent(req: AuthorizeRequest): string {
+    // Globally unique, like Stripe's ids: fakes in different tests share one database.
+    const id = `pi_fake_${randomUUID().replaceAll('-', '')}`;
+    this.intents.set(id, {
+      id,
+      amount: req.amount,
+      amountCapturable: req.amount,
+      status: 'requires_capture',
+      metadata: req.metadata,
+    });
+    return id;
+  }
+
+  /**
+   * What the Stripe adapter does after a 500: the request finished, so any hold it placed
+   * exists now. Find it by bid id, or report that there is none (spec §5). Without this, the
+   * replayed 500 would leave the bid pending for a day.
+   */
+  private recoverFromServerError(req: AuthorizeRequest): AuthorizeResult {
+    for (const intent of this.intents.values()) {
+      if (intent.metadata.bidId === req.metadata.bidId && intent.status === 'requires_capture') {
+        return {
+          ok: true,
+          paymentIntentId: intent.id,
+          status: 'requires_capture',
+          amountCapturable: intent.amountCapturable,
+        };
+      }
+    }
+    return { ok: false, reason: 'processing_error' };
   }
 
   cancel(paymentIntentId: string, options: { idempotencyKey: string }): Promise<EffectResult> {

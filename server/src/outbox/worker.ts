@@ -112,11 +112,16 @@ async function perform(deps: OutboxDeps, row: Row): Promise<EffectResult> {
       .set({ doneAt: sql`clock_timestamp()`, lastError: null })
       .where(eq(outbox.id, row.id));
 
+  // One idempotency key per attempt, not per row. Stripe replays a 500 for its key for a
+  // day, so a fixed key would turn one server error into a failed row. Two attempts that
+  // both land are harmless: the port judges a cancel or capture of an intent already in
+  // that state a success, by the intent's state rather than by the key.
+  const attemptKey = (p: HoldPayload) => `${row.kind}:${p.bidId}:${String(row.attempts)}`;
   switch (row.kind) {
     case 'cancel_hold': {
       const p = row.payload as HoldPayload;
       const res = await deps.payments.cancel(p.paymentIntentId, {
-        idempotencyKey: `cancel_hold:${p.bidId}`,
+        idempotencyKey: attemptKey(p),
       });
       if (res.ok) await markDone(deps.db);
       return res;
@@ -127,7 +132,7 @@ async function perform(deps: OutboxDeps, row: Row): Promise<EffectResult> {
         return { ok: false, retryable: false, reason: 'capture without amount' };
       const res = await deps.payments.capture(p.paymentIntentId, {
         amount: p.amount,
-        idempotencyKey: `capture:${p.bidId}`,
+        idempotencyKey: attemptKey(p),
       });
       if (res.ok) {
         await deps.db.transaction(async (tx) => {

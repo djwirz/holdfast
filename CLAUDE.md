@@ -3,11 +3,12 @@
 Real-time auctions where a bid counts only once a Stripe test-mode authorization hold covers it. Bids are ordered in a Postgres transaction, every bidder sees updates live, and a load test proves the ordering holds under near-simultaneous bids. Use they/them for Dan.
 
 ## Status
-Slice 3a (holds released and captured, against the fake) is in progress; 3b (real Stripe) is next. The spec and ADRs 0001–0006 (PR #1), slice 1 (PR #2) and slice 2 (PR #4) are merged. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
+Slice 3b (real Stripe test mode behind the `Payments` port) is in progress; slice 4 (live and visible) is next. The spec and ADRs 0001–0006 (PR #1), slice 1 (PR #2), slice 2 (PR #4) and slice 3a (PR #5) are merged. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## Commands
 - Node 26 (`.nvmrc`), pnpm via corepack. `docker compose up -d --wait` for Postgres and Redis.
 - `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test:unit`, `pnpm test:integration` (Testcontainers; needs Docker).
+- `pnpm test:live`: the real Stripe test-mode suite, by hand only; needs a `sk_test_` `STRIPE_SECRET_KEY` in `.env.local` and skips without one.
 - The storm test (`server/test/concurrency.test.ts`) prints its seed; replay a failure with `STORM_SEED=<n> pnpm exec vitest run --project integration server/test/concurrency.test.ts`.
 - `pnpm db:generate` after schema changes (commit `server/drizzle/`), `pnpm db:migrate`, `pnpm seed`.
 - Workspace: `shared` (pure rules, zod schemas), `server` (Drizzle schema, db, scripts), `web` (Vite + React). TS runs on Node's type stripping, so use `.ts` import paths and only erasable syntax (no enums or parameter properties).
