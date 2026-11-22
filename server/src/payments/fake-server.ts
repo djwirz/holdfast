@@ -10,13 +10,26 @@ import { type Decision, FakePayments } from './fake.ts';
 import { type AuthorizeRequest, TransientPaymentsError } from './port.ts';
 
 /** Fault and latency settings, from env, with the storm's knobs (server/test/concurrency.test.ts). */
-export function fakeFromEnv(env: NodeJS.ProcessEnv = process.env): FakePayments {
+/** Drill switches, changeable while running (POST /faults) so a drill can end without a restart. */
+export interface DrillFaults {
+  cancel: 'ok' | 'permanent';
+  capture: 'ok' | 'permanent';
+}
+
+export function fakeFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  faults: DrillFaults = { cancel: 'ok', capture: 'ok' },
+): FakePayments {
   const [min = 0, max = min] = (env['FAKE_LATENCY_MS'] ?? '0').split('-').map((n) => Number(n));
   const rate = (name: string) => Number(env[name] ?? 0);
   const declineRate = rate('FAKE_DECLINE_RATE');
   const lostRate = rate('FAKE_LOST_RESPONSE_RATE');
   const serverErrorEvery = rate('FAKE_SERVER_ERROR_EVERY');
   const cancelFaultRate = rate('FAKE_CANCEL_FAULT_RATE');
+  // Drills (docs/runbook.md): make every cancel or capture fail for good, as a provider
+  // outage or a revoked key would, so the alerts fire on purpose.
+  if (env['FAKE_CANCEL_FAIL'] === 'permanent') faults.cancel = 'permanent';
+  if (env['FAKE_CAPTURE_FAIL'] === 'permanent') faults.capture = 'permanent';
   let authorizations = 0;
   return new FakePayments({
     latency: () => Math.floor(min + Math.random() * (max - min)),
@@ -29,10 +42,15 @@ export function fakeFromEnv(env: NodeJS.ProcessEnv = process.env): FakePayments 
       if (r < declineRate + lostRate) return { error: 'after_authorize' };
       return { approve: true };
     },
-    effectFault: (op) =>
-      op === 'cancel' && Math.random() < cancelFaultRate
+    effectFault: (op) => {
+      if (op === 'cancel' && faults.cancel === 'permanent')
+        return { retryable: false, reason: 'drill: cancel refused' };
+      if (op === 'capture' && faults.capture === 'permanent')
+        return { retryable: false, reason: 'drill: capture refused' };
+      return op === 'cancel' && Math.random() < cancelFaultRate
         ? { retryable: true, reason: 'rate_limited' }
-        : undefined,
+        : undefined;
+    },
   });
 }
 
@@ -49,7 +67,7 @@ function send(res: ServerResponse, status: number, payload: unknown): true {
   return true;
 }
 
-export function fakeStripeServer(fake: FakePayments): Server {
+export function fakeStripeServer(fake: FakePayments, faults?: DrillFaults): Server {
   return createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://fake');
     const route = `${req.method ?? 'GET'} ${url.pathname}`;
@@ -89,6 +107,10 @@ export function fakeStripeServer(fake: FakePayments): Server {
         }
         if (route === 'GET /audit') return send(res, 200, { intents: [...fake.intents.values()] });
         if (route === 'GET /healthz') return send(res, 200, { ok: true });
+        if (route === 'POST /faults' && faults) {
+          Object.assign(faults, await body<Partial<DrillFaults>>(req));
+          return send(res, 200, faults);
+        }
         return send(res, 404, { error: 'not_found' });
       } catch (e) {
         if (e instanceof TransientPaymentsError)
@@ -109,8 +131,9 @@ if (import.meta.main) {
     console.error('the Stripe fake never runs in production');
     process.exit(1);
   }
+  const faults: DrillFaults = { cancel: 'ok', capture: 'ok' };
   const port = await listen(
-    fakeStripeServer(fakeFromEnv()),
+    fakeStripeServer(fakeFromEnv(process.env, faults), faults),
     Number(process.env['FAKE_PORT'] ?? 4010),
   );
   console.log(`fake Stripe on :${String(port)}`);

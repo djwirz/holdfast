@@ -79,6 +79,11 @@ export class HttpFakePayments implements Payments {
     return status === 404 ? null : (body as PaymentIntentView);
   }
 
+  async listHolds(): Promise<PaymentIntentView[]> {
+    const { intents } = await this.audit();
+    return [...intents.values()].filter((i) => i.status === 'requires_capture');
+  }
+
   /** Every intent the fake holds, for the invariant checker. */
   async audit(): Promise<PaymentsAudit> {
     const { body } = await this.call('GET', '/audit');

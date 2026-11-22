@@ -5,6 +5,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.ts';
 import { auctions, outbox } from '../db/schema.ts';
+import { contextFrom, inSpan } from '../observability.ts';
 import type { EffectResult, Payments } from '../payments/port.ts';
 import type { LiveEvent, Publisher } from './publisher.ts';
 
@@ -72,7 +73,25 @@ export async function runOutboxOnce(
   for (const row of claimed.rows) {
     let outcome: EffectResult;
     try {
-      outcome = await perform(deps, row);
+      // Continues the trace that queued this side effect (spec §8), on whichever instance
+      // claimed the row.
+      const payload = row.payload as { traceparent?: unknown; bidId?: string; auctionId?: string };
+      outcome = await inSpan(
+        `outbox.${row.kind}`,
+        {
+          'outbox.id': row.id,
+          'outbox.attempt': row.attempts,
+          'bid.id': payload.bidId ?? '',
+          'auction.id': payload.auctionId ?? '',
+        },
+        async (span) => {
+          const result = await perform(deps, row);
+          span.setAttribute('outbox.ok', result.ok);
+          if (!result.ok) span.setAttribute('outbox.reason', result.reason);
+          return result;
+        },
+        contextFrom(payload.traceparent),
+      );
     } catch (e) {
       // A thrown error says nothing about the outcome; retry (effects are idempotent).
       outcome = { ok: false, retryable: true, reason: e instanceof Error ? e.message : String(e) };

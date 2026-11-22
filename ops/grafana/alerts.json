@@ -1,0 +1,35 @@
+{
+  "group": "holdfast",
+  "folderUid": "holdfast",
+  "folderTitle": "Holdfast",
+  "intervalSeconds": 60,
+  "rules": [
+    {
+      "uid": "holdfast-orphaned-holds",
+      "title": "Orphaned holds",
+      "expr": "max by (job) (holdfast_holds_orphaned)",
+      "for": "5m",
+      "summary": "{{ $values.A }} card hold(s) at the payment provider have no live bid behind them (invariant 4).",
+      "runbook": "docs/runbook.md#orphaned-holds",
+      "severity": "page"
+    },
+    {
+      "uid": "holdfast-outbox-failures",
+      "title": "Outbox failures",
+      "expr": "max by (job) (holdfast_outbox_failed)",
+      "for": "1m",
+      "summary": "{{ $values.A }} outbox row(s) gave up: a cancel, capture or publish that will not be retried.",
+      "runbook": "docs/runbook.md#outbox-failures",
+      "severity": "page"
+    },
+    {
+      "uid": "holdfast-capture-failure",
+      "title": "Capture failure",
+      "expr": "(max by (job) (holdfast_outbox_failed{kind=\"capture\"}) or on() vector(0)) + (max by (job) (holdfast_auctions_unsettled) or on() vector(0))",
+      "for": "1m",
+      "summary": "A winner's hold was not captured: a failed capture, or an auction closed over 10 minutes ago and still not settled.",
+      "runbook": "docs/runbook.md#capture-failure",
+      "severity": "page"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from './db/client.ts';
 import { auctions, bids, outbox } from './db/schema.ts';
+import { currentTraceparent, inSpan } from './observability.ts';
 
 export interface LifecycleResult {
   opened: number;
@@ -34,45 +35,49 @@ export async function tickLifecycleOnce(deps: { db: Db }): Promise<LifecycleResu
          for update skip locked`);
       const auction = due.rows[0];
       if (!auction) return false;
-      const version = auction.version + 1;
+      // A span only when there's a close to do: the tick itself runs twice a second.
+      return inSpan('auction.close', { 'auction.id': auction.id }, async (span) => {
+        const version = auction.version + 1;
 
-      let winner: { id: string; amount: number; paymentIntentId: string | null } | undefined;
-      if (auction.current_high_bid_id !== null) {
-        [winner] = await tx
-          .update(bids)
-          .set({ status: 'won' })
-          .where(and(eq(bids.id, auction.current_high_bid_id), eq(bids.status, 'accepted')))
-          .returning({ id: bids.id, amount: bids.amount, paymentIntentId: bids.paymentIntentId });
-      }
-      // With no winner there's nothing to capture, so the auction is settled at once.
-      await tx
-        .update(auctions)
-        .set({ status: winner ? 'closed' : 'settled', version })
-        .where(eq(auctions.id, auction.id));
-      if (winner?.paymentIntentId) {
+        let winner: { id: string; amount: number; paymentIntentId: string | null } | undefined;
+        if (auction.current_high_bid_id !== null) {
+          [winner] = await tx
+            .update(bids)
+            .set({ status: 'won' })
+            .where(and(eq(bids.id, auction.current_high_bid_id), eq(bids.status, 'accepted')))
+            .returning({ id: bids.id, amount: bids.amount, paymentIntentId: bids.paymentIntentId });
+        }
+        // With no winner there's nothing to capture, so the auction is settled at once.
+        await tx
+          .update(auctions)
+          .set({ status: winner ? 'closed' : 'settled', version })
+          .where(eq(auctions.id, auction.id));
+        if (winner?.paymentIntentId) {
+          await tx.insert(outbox).values({
+            kind: 'capture',
+            payload: {
+              paymentIntentId: winner.paymentIntentId,
+              bidId: winner.id,
+              auctionId: auction.id,
+              amount: winner.amount,
+              traceparent: currentTraceparent(),
+            },
+          });
+        }
         await tx.insert(outbox).values({
-          kind: 'capture',
+          kind: 'publish',
           payload: {
-            paymentIntentId: winner.paymentIntentId,
-            bidId: winner.id,
+            event: 'auction.closed',
             auctionId: auction.id,
-            amount: winner.amount,
-            traceparent: null,
+            version,
+            winningBidId: winner?.id ?? null,
+            amount: winner?.amount ?? null,
+            traceparent: currentTraceparent(),
           },
         });
-      }
-      await tx.insert(outbox).values({
-        kind: 'publish',
-        payload: {
-          event: 'auction.closed',
-          auctionId: auction.id,
-          version,
-          winningBidId: winner?.id ?? null,
-          amount: winner?.amount ?? null,
-          traceparent: null,
-        },
+        span.setAttribute('auction.winner_bid_id', winner?.id ?? '');
+        return true;
       });
-      return true;
     });
     if (!didClose) break;
     closed++;

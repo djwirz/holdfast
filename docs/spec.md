@@ -175,6 +175,14 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
   - Pending bids by age.
   - Outstanding holds without a live bid. This last one is the alarm.
 - **Alerts:** orphaned holds above zero for more than a few minutes; outbox failures; a capture failure.
+- **As built (slice 6b):**
+  - OpenTelemetry to Grafana Cloud's free tier over OTLP. `server/src/telemetry.ts` loads first with `node --import` and does nothing unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so tests and local runs need no collector.
+  - Postgres and Redis calls are traced only inside a traced operation. The background loops poll several times a second on every replica, and tracing each poll would be gigabytes a day of nothing.
+  - A bid's trace: `bid.claim` → `payments.authorize` → `bid.decide` (with the lock wait) → `outbox.<kind>` on whichever instance claims the row (its `traceparent` travels in the row) → the Redis doorbell (now `{version, traceparent}`) → `live.fanout` and `sse.write` on every instance.
+  - Metrics: `holdfast_bids_total{outcome,reason}`, hold and lock-wait histograms, and a sampler on every replica every 30 seconds. It reports outbox lag, failed outbox rows by kind, stale pending bids, unsettled auctions, and `holdfast_holds_orphaned`.
+  - **The orphaned-hold count reads the payment provider** (`Payments.listHolds()`), not our own records. A live hold counts unless it's the current high of an open auction, a closed auction's winner awaiting capture, a pending bid, or one whose cancellation was queued in the last two minutes. Holds for auctions this database doesn't know are another environment's and are ignored.
+  - Every replica samples, and the alerts take the max. A replica that stopped sampling would keep exporting its last value and could hold an alert open.
+  - The alerts live in `ops/grafana/alerts.json` and are applied by `pnpm grafana:alerts`. `docs/runbook.md` covers each. `pnpm drill <orphan|outbox|capture>` fires one on purpose against a local stack labelled `job="holdfast-drill"`, never the live demo.
 
 ## 9. Security
 - Secrets (Stripe secret and webhook keys, GitHub OAuth secret, session secret) live in the host's secret store and never reach the client or logs.
@@ -240,7 +248,7 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 5. **First deploy:** budget alarm first, then the host, managed Postgres and Redis, secrets, deploy on merge, and a post-deploy smoke test. Fix what real networking and TLS turn up.
 6. **Load and trace,** split in two PRs (Dan, after slice 5):
    - **6a, load:** k6 scenarios and the checker in CI, the shared Stripe fake, the README chart and throughput figure, and releasing the holds the real-Stripe suites leave open.
-   - **6b, observability** (Grafana Cloud free): OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook.
+   - **6b, observability** (Grafana Cloud free): OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook. Alerts as code and drills on a local stack (Dan).
 7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes.
 
 ## 13. Open questions (settle before slice 1 unless noted)

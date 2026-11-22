@@ -26,7 +26,10 @@
     "railway:env": "node scripts/railway-env.ts",
     "stripe:webhook": "node server/scripts/stripe-webhook.ts",
     "load": "load/run.sh",
-    "load:stack": "load/stack.sh"
+    "load:stack": "load/stack.sh",
+    "drill": "node scripts/drill.ts",
+    "grafana:alerts": "node scripts/grafana-alerts.ts",
+    "ops:requeue": "node --env-file-if-exists=.env.local server/src/ops/requeue.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",

@@ -85,6 +85,27 @@ for (const [name, rule] of Object.entries(SECRETS)) {
   if (!rule.check(value)) problems.push(`${name} doesn't look right (expected ${rule.hint})`);
   else sets.set(name, value);
 }
+// Telemetry (spec §8) to Grafana Cloud's OTLP gateway, when its credentials are in
+// .env.railway. The auth header is built here from the instance id and token, never shown.
+const otlpEndpoint = local['GRAFANA_OTLP_ENDPOINT'];
+const otlpInstance = local['GRAFANA_INSTANCE_ID'];
+const otlpToken = local['GRAFANA_OTLP_TOKEN'];
+if (otlpEndpoint || otlpInstance || otlpToken) {
+  if (!otlpEndpoint?.startsWith('https://') || !otlpInstance || !otlpToken?.startsWith('glc_')) {
+    problems.push(
+      'GRAFANA_OTLP_ENDPOINT (https://…), GRAFANA_INSTANCE_ID and GRAFANA_OTLP_TOKEN (glc_…) go together',
+    );
+  } else {
+    const basic = Buffer.from(`${otlpInstance}:${otlpToken}`).toString('base64');
+    sets.set('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint);
+    sets.set('OTEL_EXPORTER_OTLP_HEADERS', `Authorization=Basic%20${basic}`);
+    sets.set('OTEL_SERVICE_NAME', 'holdfast');
+    sets.set('OTEL_RESOURCE_ATTRIBUTES', 'deployment.environment=production');
+  }
+} else {
+  skipped.push('OTEL_* (no GRAFANA_OTLP_* in .env.railway; telemetry stays off)');
+}
+
 if (problems.length > 0) {
   console.error(`Not setting anything:\n  ${problems.join('\n  ')}`);
   process.exit(1);

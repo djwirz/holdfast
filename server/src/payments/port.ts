@@ -54,4 +54,9 @@ export interface Payments {
     options: { amount: number; idempotencyKey: string },
   ): Promise<EffectResult>;
   retrieve(paymentIntentId: string): Promise<PaymentIntentView | null>;
+  /**
+   * Every hold still holding money (requires_capture) placed for this app's bids, within a
+   * hold's lifetime. The orphaned-hold alarm compares it with the bids that may hold money.
+   */
+  listHolds(): Promise<PaymentIntentView[]>;
 }

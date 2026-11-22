@@ -22,16 +22,20 @@ const fake = spawn(process.execPath, ['src/payments/fake-server.ts'], {
 });
 
 const children = INSTANCES.map((port) =>
-  spawn(process.execPath, ['--env-file-if-exists=../.env.local', 'src/main.ts'], {
-    cwd: serverDir,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      FAKE_PAYMENTS_URL:
-        process.env['FAKE_PAYMENTS_URL'] ?? `http://127.0.0.1:${String(FAKE_PORT)}`,
+  spawn(
+    process.execPath,
+    ['--env-file-if-exists=../.env.local', '--import', './src/telemetry.ts', 'src/main.ts'],
+    {
+      cwd: serverDir,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        FAKE_PAYMENTS_URL:
+          process.env['FAKE_PAYMENTS_URL'] ?? `http://127.0.0.1:${String(FAKE_PORT)}`,
+      },
+      stdio: 'inherit',
     },
-    stdio: 'inherit',
-  }),
+  ),
 );
 
 let next = 0;

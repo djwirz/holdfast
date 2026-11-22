@@ -4,6 +4,7 @@
 // Postgres before sending anything past it. Each client sees every version exactly once.
 import type { AuctionEvent } from '@holdfast/shared';
 import type { Db } from '../db/client.ts';
+import { tracer } from '../observability.ts';
 import type { LiveHub } from './hub.ts';
 import { type Aliaser, eventsSince, snapshot } from './read.ts';
 
@@ -38,11 +39,22 @@ export async function streamAuction(sink: SseSink, options: StreamOptions): Prom
   let chain = Promise.resolve();
 
   const send = (events: AuctionEvent[]) => {
-    for (const e of events) {
-      if (e.version <= last) continue;
+    const fresh = events.filter((e) => e.version > last);
+    if (fresh.length === 0) return;
+    // One span per write to this client: the end of a bid's trace (spec §8). It joins the
+    // trace when the write follows a traced doorbell; the snapshot on connect has none.
+    const span = tracer.startSpan('sse.write', {
+      attributes: {
+        'auction.id': auctionId,
+        'sse.events': fresh.length,
+        'sse.first_version': fresh[0]?.version ?? 0,
+      },
+    });
+    for (const e of fresh) {
       sink.write(frame(e.type, e.version, e));
       last = e.version;
     }
+    span.end();
   };
 
   const deliver = (events: AuctionEvent[]) => {

@@ -4,7 +4,7 @@ Real-time auctions where a bid counts only once a Stripe authorization hold cove
 
 **Live demo:** https://holdfast-production-ba968615.up.railway.app (Stripe test mode: use card 4242 4242 4242 4242; no real money moves).
 
-**Status:** slice 6a of 7 (correct under load: a k6 storm with the invariant checker on every PR). Deployed on Railway with two replicas ([docs/deploy.md](docs/deploy.md)); two people in two browsers can bid against each other and see every change live; each bid places a real test-mode card hold. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
+**Status:** slice 6b of 7 (observable: one bid traced end to end across both instances; alerts on orphaned holds, outbox failures and capture failures, each fired once on purpose; see [docs/runbook.md](docs/runbook.md)). Deployed on Railway with two replicas ([docs/deploy.md](docs/deploy.md)); two people in two browsers can bid against each other and see every change live; each bid places a real test-mode card hold. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
 
 ## Correct under load
 
