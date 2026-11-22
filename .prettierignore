@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+server/drizzle/meta/
+dist/
+coverage/
+# Hand-written docs; merged ADRs must not change shape.
+*.md
