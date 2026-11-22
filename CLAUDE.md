@@ -3,7 +3,7 @@
 Real-time auctions where a bid counts only once a Stripe test-mode authorization hold covers it. Bids are ordered in a Postgres transaction, every bidder sees updates live, and a load test proves the ordering holds under near-simultaneous bids. Use they/them for Dan.
 
 ## Status
-Slice 1 (local foundation) is in progress; the spec and ADRs 0001–0006 were merged in PR #1. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
+Slice 1 (local foundation) is merged; the spec and ADRs 0001–0006 were merged in PR #1. Open questions are in spec §13; settle each one by the slice it names. Slice 2 (bids under concurrency) is next. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## Commands
 - Node 26 (`.nvmrc`), pnpm via corepack. `docker compose up -d --wait` for Postgres and Redis.
@@ -15,6 +15,7 @@ Slice 1 (local foundation) is in progress; the spec and ADRs 0001–0006 were me
 ## How we work
 - Pull requests only; never push to `main`. Merged PRs are the project's record.
 - Spec first, then one thin end-to-end slice per PR (spec §12). Start each slice in plan mode.
+- **Problem first.** Every tool, feature and dependency must earn its place through the problem: an invariant, a failure mode in spec §7, or an acceptance criterion in §11. Each slice's plan says which one for anything new. Skills shown are a by-product: never add something to show a skill, and never cut something the invariants need to save time on polish.
 - Every decision that would be expensive to reverse gets an ADR in `docs/adr/` (format: ADR 0001). Don't decide silently in code.
 - ADRs are written as `Accepted` in the PR that adds them; merging is the acceptance. Never rewrite a merged ADR's decision: add a new ADR that supersedes it.
 - When the spec and the code disagree, stop and ask; update the spec in the same PR if the decision changes.

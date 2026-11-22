@@ -5,9 +5,9 @@ Filled from the kit's `templates/artifact-spec.md` before any agent builds code.
 ## One line
 A live auction site where your bid only counts once your card's hold covers it, so the winner can always pay and nobody's bid is lost to a race.
 
-## Market skills it proves
-From the build-plan roadmap: **TypeScript, Node.js, PostgreSQL, Stripe (payments), real-time, Redis, Playwright, observability**, plus testing and CI.
-Provisional: kit step 1 (`resume-score.json` from saved postings) hasn't run yet. When it has, check this list against its "need proof" skills and adjust before slice 1 if they disagree.
+## What it exercises
+**TypeScript, Node.js, PostgreSQL, Stripe (payments), real-time, Redis, Playwright, observability**, plus testing and CI.
+This list is a result of the design, not a target for it. Every item is there because the problem needs it: holds need Stripe, ordering needs Postgres row locks, live bidding across instances needs SSE and Redis, and proving the invariants needs the load test, Playwright and traces. No skills score gates any slice, and a tool is never added just to show it off (CLAUDE.md).
 
 ## Problem and users
 - **Who has the problem:** anyone running timed auctions with real money: marketplaces, charity auctions, livestream sales. The engineers who build them have to make "highest bid wins" and "the winner can pay" true at the same moment, under concurrency.
