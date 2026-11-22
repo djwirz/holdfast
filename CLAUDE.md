@@ -3,7 +3,14 @@
 Real-time auctions where a bid counts only once a Stripe test-mode authorization hold covers it. Bids are ordered in a Postgres transaction, every bidder sees updates live, and a load test proves the ordering holds under near-simultaneous bids. Use they/them for Dan.
 
 ## Status
-Planning: `docs/spec.md` and ADRs 0001–0006 are proposed in PR #1 (the ADRs say `Accepted`; merging accepts them). Open questions are in spec §13; settle each one by the slice it names, and the rest before slice 1. The judgment behind the project is in `docs/artifact-spec.md`.
+Slice 1 (local foundation) is in progress; the spec and ADRs 0001–0006 were merged in PR #1. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
+
+## Commands
+- Node 26 (`.nvmrc`), pnpm via corepack. `docker compose up -d --wait` for Postgres and Redis.
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test:unit`, `pnpm test:integration` (Testcontainers; needs Docker).
+- `pnpm db:generate` after schema changes (commit `server/drizzle/`), `pnpm db:migrate`, `pnpm seed`.
+- Workspace: `shared` (pure rules, zod schemas), `server` (Drizzle schema, db, scripts), `web` (Vite + React). TS runs on Node's type stripping, so use `.ts` import paths and only erasable syntax (no enums or parameter properties).
+- Prettier skips Markdown on purpose: never reformat docs or merged ADRs.
 
 ## How we work
 - Pull requests only; never push to `main`. Merged PRs are the project's record.

@@ -1,0 +1,11 @@
+packages:
+  - shared
+  - server
+  - web
+# None of these need their install scripts: esbuild ships platform binaries as optional
+# dependencies, and ssh2/cpu-features (via Testcontainers) fall back to pure JS.
+allowBuilds:
+  cpu-features: false
+  esbuild: false
+  protobufjs: false
+  ssh2: false
