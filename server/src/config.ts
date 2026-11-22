@@ -33,13 +33,26 @@ const ConfigSchema = z
     DEV_SIGN_IN: flag,
     /** The built page to serve from the server itself (production); unset locally. */
     WEB_DIST: z.string().min(1).optional(),
+    /** The shared Stripe fake (payments/fake-server.ts) for multi-instance local runs and load. */
+    FAKE_PAYMENTS_URL: z
+      .url()
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
     /** Background loop intervals; production polls a little less (two replicas each poll). */
+    /** Bids per bidder per 10 seconds (spec §9); the load test raises it to measure ordering, not limits. */
+    BID_RATE_LIMIT: z.coerce.number().int().min(1).default(10),
+    /** Sign-ins per IP per minute (spec §9); the load test signs every bidder in from one IP. */
+    AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(20),
     OUTBOX_INTERVAL_MS: z.coerce.number().int().min(10).default(100),
     LIFECYCLE_INTERVAL_MS: z.coerce.number().int().min(50).default(500),
   })
   .refine((c) => !c.DEV_SIGN_IN || c.NODE_ENV !== 'production', {
     message: 'DEV_SIGN_IN is only allowed in development and test',
     path: ['DEV_SIGN_IN'],
+  })
+  .refine((c) => !c.FAKE_PAYMENTS_URL || c.NODE_ENV !== 'production', {
+    message: 'the Stripe fake is for development, tests and load only',
+    path: ['FAKE_PAYMENTS_URL'],
   })
   // Session cookies are Secure only on https, so production must be served over it.
   .refine((c) => c.NODE_ENV !== 'production' || c.APP_ORIGIN.startsWith('https://'), {

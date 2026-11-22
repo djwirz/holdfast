@@ -3,7 +3,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/', '**/coverage/', 'server/drizzle/'] },
+  // load/ runs inside k6, not Node: no Node types apply there, and its results are data.
+  { ignores: ['**/dist/', '**/coverage/', 'server/drizzle/', 'load/'] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {

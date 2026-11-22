@@ -9,10 +9,27 @@ const PROXY_PORT = Number(process.env['PORT'] ?? 3000);
 const INSTANCES = [PROXY_PORT + 1, PROXY_PORT + 2];
 const serverDir = resolve(import.meta.dirname, '../..');
 
+// One Stripe fake for both instances (payments/fake-server.ts); used when no test key is set.
+const FAKE_PORT = Number(process.env['FAKE_PORT'] ?? 4010);
+const fake = spawn(process.execPath, ['src/payments/fake-server.ts'], {
+  cwd: serverDir,
+  env: {
+    ...process.env,
+    FAKE_PORT: String(FAKE_PORT),
+    FAKE_LATENCY_MS: process.env['FAKE_LATENCY_MS'] ?? '150-500',
+  },
+  stdio: 'inherit',
+});
+
 const children = INSTANCES.map((port) =>
   spawn(process.execPath, ['--env-file-if-exists=../.env.local', 'src/main.ts'], {
     cwd: serverDir,
-    env: { ...process.env, PORT: String(port) },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      FAKE_PAYMENTS_URL:
+        process.env['FAKE_PAYMENTS_URL'] ?? `http://127.0.0.1:${String(FAKE_PORT)}`,
+    },
     stdio: 'inherit',
   }),
 );
@@ -39,7 +56,7 @@ proxy.listen(PROXY_PORT, () => {
 
 const stop = () => {
   proxy.close();
-  for (const child of children) child.kill('SIGTERM');
+  for (const child of [...children, fake]) child.kill('SIGTERM');
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

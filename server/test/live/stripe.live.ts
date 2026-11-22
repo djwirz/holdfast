@@ -76,7 +76,16 @@ describe.skipIf(!enabled)('Stripe test mode', () => {
   });
 
   afterAll(async () => {
-    // Deleting a Customer leaves its PaymentIntents in the dashboard for inspection.
+    // Release every hold this run left open (invariant 4 holds in the sandbox too): deleting
+    // a Customer doesn't release its holds, they'd sit there for 7 days. The intents stay in
+    // the dashboard for inspection.
+    for (const customer of customerIds) {
+      for await (const intent of client.paymentIntents.list({ customer, limit: 100 })) {
+        if (intent.status === 'requires_capture') {
+          await client.paymentIntents.cancel(intent.id).catch(() => undefined);
+        }
+      }
+    }
     for (const id of customerIds) await client.customers.del(id).catch(() => undefined);
     await testDb.close();
   });

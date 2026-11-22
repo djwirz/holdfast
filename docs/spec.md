@@ -201,6 +201,10 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
   - `pnpm test:e2e` (CI and local): two instances behind the round-robin proxy, the built page, the fake. A bid war through to the close, axe on the home and auction pages, the live region, and a keyboard-only bid.
   - `pnpm test:e2e:stripe` (by hand, like `pnpm test:live`): card setup in Stripe's iframe against real test mode, a bid with a real hold, and a card that saves but declines when charged.
 - **Load:** k6 scenarios against the local stack. A short run with the checker on every PR; the bigger runs by hand, with the chart in the README.
+  - `load/storm.ts` (k6 2.3.0, in Docker): bidders on their own sessions fire bids near-simultaneously through the round-robin proxy, on a stale view of the price, resending some keys, while the auction ends partway through. `pnpm load:stack` runs the target: two instances plus the shared Stripe fake, with latency, declines, lost responses, replayed `500`s and failing cancels injected. `pnpm load` seeds an auction, runs the storm, then the checker.
+  - The checker CLI (`server/src/check-invariants.ts`) waits until the auction has closed and everything has settled, then checks all five invariants against the database and the fake's own record. It fails on any violation, any outbox row that gave up, or a run where no bid was accepted. k6 fails if fewer than 90% of planned bids got an outcome. A run where nothing happened proves nothing.
+  - CI runs 30 bidders × 10 bids on a 20-second auction. The README chart comes from a by-hand run of 200 × 15.
+  - **Shared fake.** The instances share one Stripe fake over HTTP (`server/src/payments/fake-server.ts`). With a fake per process, a hold placed through one instance was unknown to the other, so its cancellation failed and the hold stayed open. That broke invariant 4 in our own two-instance setup, and the end-to-end test now runs the checker too.
 - **CI on every PR:** lint, typecheck, unit, integration, short load and checker, Playwright, gitleaks. Merges to `main` deploy after the same checks.
 
 ### Local development
@@ -234,7 +238,9 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
    - **4a, the server:** the Fastify API, sessions with GitHub and dev sign-in, SSE with Redis fan-out across two instances, the webhook, and the fan-out and Redis-down tests.
    - **4b, the browser:** the React auction page, Elements card setup with its SetupIntent endpoints, and Playwright with two bidders.
 5. **First deploy:** budget alarm first, then the host, managed Postgres and Redis, secrets, deploy on merge, and a post-deploy smoke test. Fix what real networking and TLS turn up.
-6. **Load and trace:** k6 scenarios and the checker in CI, OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook.
+6. **Load and trace,** split in two PRs (Dan, after slice 5):
+   - **6a, load:** k6 scenarios and the checker in CI, the shared Stripe fake, the README chart and throughput figure, and releasing the holds the real-Stripe suites leave open.
+   - **6b, observability** (Grafana Cloud free): OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook.
 7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes.
 
 ## 13. Open questions (settle before slice 1 unless noted)

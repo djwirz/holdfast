@@ -13,6 +13,7 @@ import { startOutboxWorker } from './outbox/worker.ts';
 import { stripeCards } from './payments/cards.ts';
 import { customerFromUsers } from './payments/customers.ts';
 import { FakePayments } from './payments/fake.ts';
+import { HttpFakePayments } from './payments/http-fake.ts';
 import type { Payments } from './payments/port.ts';
 import { StripePayments, stripeClient } from './payments/stripe.ts';
 import { reconcileOnce } from './reconciler.ts';
@@ -35,7 +36,11 @@ const stripe = config.STRIPE_SECRET_KEY ? stripeClient(config.STRIPE_SECRET_KEY)
 const payments: Payments = stripe
   ? new StripePayments({ client: stripe, customerFor: customerFromUsers(db) })
   : // The fake is the default (spec §11), slow enough that pending bids are visible.
-    new FakePayments({ latency: () => 150 + Math.floor(Math.random() * 350) });
+    // Several instances share one fake over HTTP, or a hold placed on one is unknown to the
+    // others (payments/fake-server.ts). Alone, an in-process fake is enough.
+    config.FAKE_PAYMENTS_URL
+    ? new HttpFakePayments(config.FAKE_PAYMENTS_URL)
+    : new FakePayments({ latency: () => 150 + Math.floor(Math.random() * 350) });
 
 const alias = aliaser(config.SESSION_SECRET);
 const app = await buildApp({
@@ -56,6 +61,10 @@ const app = await buildApp({
   stripePublishableKey: config.STRIPE_PUBLISHABLE_KEY ?? null,
   stripeWebhook: config.STRIPE_WEBHOOK_SECRET ? { secret: config.STRIPE_WEBHOOK_SECRET } : null,
   webDist: config.WEB_DIST ?? null,
+  rateLimits: {
+    bids: { max: config.BID_RATE_LIMIT, windowMs: 10_000 },
+    auth: { max: config.AUTH_RATE_LIMIT, windowMs: 60_000 },
+  },
   logger: true,
 });
 const log = app.log;

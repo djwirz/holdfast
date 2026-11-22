@@ -93,6 +93,59 @@ jobs:
             test-results/
           retention-days: 7
 
+  load:
+    name: Load (k6 storm and invariant checker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Spec §10: a short storm on every PR, through two instances, the round-robin proxy,
+    # Redis and the shared Stripe fake with failures injected; then the checker.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: holdfast
+          POSTGRES_PASSWORD: holdfast
+          POSTGRES_DB: holdfast
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U holdfast -d holdfast"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:8
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://holdfast:holdfast@localhost:5432/holdfast
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - name: Start the stack (shared fake, two instances, proxy)
+        run: |
+          nohup pnpm load:stack > stack.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf localhost:3000/api/healthz && curl -sf localhost:4010/healthz && exit 0
+            sleep 1
+          done
+          cat stack.log; exit 1
+      - run: pnpm load
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-results
+          path: |
+            load/results/
+            stack.log
+          retention-days: 7
+
   gitleaks:
     name: Secret scan
     runs-on: ubuntu-latest

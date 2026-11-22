@@ -4,3 +4,4 @@ dist/
 coverage/
 # Hand-written docs; merged ADRs must not change shape.
 *.md
+load/results/
