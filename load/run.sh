@@ -19,7 +19,9 @@ auction=$(cd server && node --env-file-if-exists=../.env.local src/seed-e2e.ts "
 echo "auction $auction: $VUS bidders x $BIDS_PER_VU bids, ends in ${ENDS_IN}s"
 
 status=0
-docker run --rm --add-host=host.docker.internal:host-gateway \
+# As this user, so k6 can write its results into the mounted folder on Linux too (CI);
+# the image's own user can't. Docker Desktop on a Mac hides the difference.
+docker run --rm --add-host=host.docker.internal:host-gateway --user "$(id -u):$(id -g)" \
   -v "$PWD/load:/load" \
   -e BASE="${BASE:-http://host.docker.internal:3000}" -e ORIGIN="$ORIGIN" -e AUCTION_ID="$auction" \
   -e VUS="$VUS" -e BIDS_PER_VU="$BIDS_PER_VU" -e ENDS_IN="$ENDS_IN" -e RUN="$RUN" \
