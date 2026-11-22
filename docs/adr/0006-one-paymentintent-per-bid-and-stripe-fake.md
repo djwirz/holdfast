@@ -8,7 +8,7 @@ Each accepted bid needs a hold for its full amount (ADR 0002). A bidder often ra
 
 ## Options considered
 For the hold:
-1. **One PaymentIntent per bid.** A new manual-capture PaymentIntent for each bid. The bidder's previous hold is canceled once the new bid commits. It works with every card, and each bid's coverage is independent and easy to audit. The cost is more Stripe calls, and for a moment a bidder can have two holds on their card.
+1. **One PaymentIntent per bid.** A new manual-capture PaymentIntent for each bid. The hold of the bid it outbids, whoever placed it, is canceled once the new bid commits. It works with every card, and each bid's coverage is independent and easy to audit. The cost is more Stripe calls, and a bidder who raises their own high bid has two holds on their card for a moment.
 2. **One PaymentIntent per bidder per auction, incrementally authorized.** Fewer objects, and it's what a real marketplace would want, but its availability is uncertain and it adds a failure mode (an increment that's declined while the old amount is still held).
 
 For tests:

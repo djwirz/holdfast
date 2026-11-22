@@ -3,7 +3,7 @@
 Real-time auctions where a bid counts only once a Stripe test-mode authorization hold covers it. Bids are ordered in a Postgres transaction, every bidder sees updates live, and a load test proves the ordering holds under near-simultaneous bids. Use they/them for Dan.
 
 ## Status
-Planning: `docs/spec.md` and ADRs 0001–0006 are drafts for PR #1. Open questions are in spec §13; settle them before slice 1. The judgment behind the project is in `docs/artifact-spec.md`.
+Planning: `docs/spec.md` and ADRs 0001–0006 are proposed in PR #1 (the ADRs say `Accepted`; merging accepts them). Open questions are in spec §13; settle each one by the slice it names, and the rest before slice 1. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## How we work
 - Pull requests only; never push to `main`. Merged PRs are the project's record.
@@ -22,6 +22,8 @@ Planning: `docs/spec.md` and ADRs 0001–0006 are drafts for PR #1. Open questio
 - Numbers in docs: honest estimates in words, never false precision.
 
 ## Invariants (spec §7): never break these
-- No bid is `accepted` unless its PaymentIntent was in `requires_capture` for at least the bid amount when the transaction committed.
-- Accepted bids on an auction strictly increase in commit order.
-- Every hold that isn't the current high bid's, or the captured winner's, is eventually canceled.
+1. **Covered:** no bid is `accepted` unless its PaymentIntent was in `requires_capture` for at least the bid amount before the accepting transaction committed.
+2. **Ordered:** accepted bids start at or above `starting_price`, strictly increase by at least `min_increment` in commit order, and exactly one is the current high.
+3. **Closed is closed:** no bid is accepted at or after `ends_at` by database time.
+4. **No orphaned holds:** once the outbox and reconciler are idle, the only live holds are the current high's (open) and the winner's (closed or settled).
+5. **Idempotent:** a retry with the same user and key never creates a second hold or bid.

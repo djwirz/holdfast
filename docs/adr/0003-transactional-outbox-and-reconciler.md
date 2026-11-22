@@ -13,7 +13,7 @@ Accepting a bid causes effects outside Postgres: cancel the previous high bid's 
 4. **Rely on Stripe webhooks to drive cleanup.** Webhooks can arrive late, twice or never, and they don't cover the Redis publish.
 
 ## Decision
-Option 2, plus a **reconciler** on an interval. It settles `pending` bids older than a short threshold by reading their PaymentIntent, and it cancels any `requires_capture` hold whose bid isn't the current high or the winner. Webhooks only speed reconciliation up; they're never the only path.
+Option 2, plus a **reconciler** on an interval. It settles `pending` bids older than a short threshold by reading their PaymentIntent, and it cancels any `requires_capture` hold whose bid is already resolved and isn't the current high or the winner. A younger `pending` bid's hold is left alone, because that bid may be about to commit. The handler and the reconciler both resolve a pending bid under the auction row lock and only from `pending`, so they can't both decide it. Webhooks only speed reconciliation up; they're never the only path.
 
 ## Why
 "No orphaned holds" is the invariant that would hurt a real customer, so it can't depend on a process staying alive. The outbox makes every effect durable with the same transaction that justifies it, and the reconciler covers the one gap the outbox can't (before the commit).

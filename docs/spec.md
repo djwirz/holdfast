@@ -83,7 +83,8 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 ### Components
 - **Bid handler.** Runs the flow in ADR 0002. The Stripe call happens outside any transaction or lock, so a slow authorization never blocks other bidders.
 - **Outbox worker.** Reads outbox rows written in the same transaction as the state change (ADR 0003) and does the side effects: cancel a hold, capture the winner, publish to Redis. It claims rows with `FOR UPDATE SKIP LOCKED` and is safe on every instance.
-- **Reconciler.** On an interval, settles bids stuck in `pending`: it reads their PaymentIntent and either finishes the commit or cancels the hold. It also cancels any `requires_capture` PaymentIntent whose bid is not the current high. It's the backstop for crashes between steps.
+- **Reconciler.** On an interval, settles bids stuck in `pending` longer than a short threshold: it reads their PaymentIntent and either finishes the commit or cancels the hold. It also cancels any `requires_capture` PaymentIntent whose bid is already resolved and is neither the current high nor the winner. It never cancels the hold of a bid that is still `pending` and younger than the threshold, because that bid may be about to commit. It's the backstop for crashes between steps.
+- **Resolving a pending bid.** The bid handler and the reconciler both resolve a bid under the auction row lock, and only with `UPDATE … WHERE status = 'pending'`. Whichever gets there first decides; the other sees no row to update and does nothing.
 - **Close job.** Marks auctions `closed` at `ends_at`, using database time, and enqueues the winner's capture.
 - **SSE endpoint.** Sends a snapshot on connect, then events in auction-version order. It resumes from `Last-Event-ID` (ADR 0004).
 - **Webhook endpoint.** Verifies Stripe's signature and records payment-intent events. It uses them to speed up reconciliation, never as the only source of truth.
@@ -92,26 +93,33 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 | Table | Key fields |
 |---|---|
 | `users` | id, github_id, login, stripe_customer_id, default_payment_method_id |
-| `auctions` | id, title, starts_at, ends_at, status (`scheduled`/`open`/`closed`/`settled`), min_increment, current_high_bid_id, version |
-| `bids` | id (uuid; also the Stripe idempotency key), auction_id, user_id, amount, status (`pending`/`accepted`/`outbid`/`lost_race`/`rejected`/`won`/`void`), reason, payment_intent_id, auction_version (set on accept), created_at, resolved_at |
-| `outbox` | id, kind (`cancel_hold`/`capture`/`publish`), payload, available_at, attempts, done_at |
+| `auctions` | id, title, starts_at, ends_at, status (`scheduled`/`open`/`closed`/`settled`), starting_price, min_increment, current_high_bid_id, version |
+| `bids` | id (uuid; also the Stripe idempotency key), auction_id, user_id, idempotency_key (unique per user), amount, status (`pending`/`accepted`/`outbid`/`lost_race`/`rejected`/`won`), reason, payment_intent_id, auction_version (set on accept), created_at, resolved_at |
+| `outbox` | id, kind (`cancel_hold`/`capture`/`publish`), payload (includes the W3C `traceparent`), available_at, attempts, done_at |
 | `stripe_events` | id (Stripe event id, for dedupe), type, payload, received_at |
 | `sessions` | id, user_id, expires_at |
 
 Money is stored as integer cents. `auctions.version` increments on every accepted bid and close, and it's the SSE event id.
 
+**Bid statuses.** A bid starts `pending`. It becomes `rejected` (Stripe declined or needs authentication), `lost_race` (it no longer qualified under the lock) or `accepted`. An accepted bid becomes `outbid` when a higher bid is accepted, or `won` when the auction closes with it as the current high. A `won` bid stays `won` whether or not capture succeeds; the auction's status says whether it was settled.
+
+**Bid rules.** The first accepted bid must be at least `starting_price`. Every later one must be at least the current high plus `min_increment`. The auction must be `open` and database time before `ends_at`.
+
 ## 5. Payments: Stripe test mode
 - **Card setup.** On first bid, a SetupIntent with Stripe Elements saves a test card to the user's Customer (`usage: off_session`).
 - **The hold.** Each bid creates and confirms a PaymentIntent with `capture_method: manual`, `off_session: true`, the saved payment method, and the bid id as the `Idempotency-Key`. Metadata carries the bid and auction ids. Success means status `requires_capture`, with `amount_capturable` at least the bid amount.
-- **One PaymentIntent per bid** (ADR 0006). The previous high bid's hold is canceled after the new one commits. Incremental authorization is an open question (§13).
+- **One PaymentIntent per bid** (ADR 0006). When a bid is accepted, the hold of the bid it outbid is canceled through the outbox, whoever placed it. A bidder raising their own high bid therefore has two holds for a moment. Incremental authorization is an open question (§13).
 - **Release:** `cancel` with reason `abandoned`. **Capture:** the winner's PaymentIntent, for the bid amount, at close.
 - **Declines.** Stripe's test cards for declines, insufficient funds and authentication-required all map to `rejected`, with the reason shown to the bidder.
 - **Webhooks:** `payment_intent.amount_capturable_updated`, `.canceled`, `.succeeded` and `.payment_failed`, deduped by event id.
 
 ## 6. Interfaces
-- `POST /auctions/:id/bids` `{ amount }` → `201 { bid }`. The bid's status is `accepted`, `lost_race` or `rejected` with a reason. Bids are idempotent on a client-supplied `Idempotency-Key` header, which maps to the bid id.
+- `POST /auctions/:id/bids` `{ amount }` → `201 { bid }` with status `accepted`, `lost_race` or `rejected` (with a reason). If the bid isn't resolved within a short deadline (Stripe slow or erroring), → `202 { bid }` with status `pending`, and the client polls the bid until it resolves.
+- `GET /bids/:id` → the bid, for its own bidder only. This is how the bidder learns a `pending` bid's outcome; the SSE stream is public and carries only accepted bids, so it never shows another bidder's rejection reason.
+- **Idempotency.** Bids take a client-supplied `Idempotency-Key` header, unique per user. A retry with the same key returns the existing bid and never authorizes again. The same key with a different auction or amount → `422`.
 - `GET /auctions/:id` → a snapshot: auction, current high and recent bids, with the `version`.
-- `GET /auctions/:id/events` → SSE. Event types `bid.accepted`, `auction.extended` (if soft close) and `auction.closed`. Every event carries the auction `version` as its id.
+- `GET /auctions/:id/events` → SSE. Event types `bid.accepted`, `auction.extended` (only if soft close is built) and `auction.closed`. Every event carries the auction `version` as its id.
+- **Creating auctions.** No public endpoint in v1. A seed script creates them through the same validated function the admin page would use (if it's built), so the one-day limit and the rules above hold either way.
 - `POST /stripe/webhook`: Stripe only, signature verified.
 - `GET /auth/github`, `GET /auth/github/callback`, `POST /auth/logout`: GitHub OAuth sign-in.
 - Schemas live in a shared zod package, used by both server and client.
@@ -120,15 +128,15 @@ Money is stored as integer cents. `auctions.version` increments on every accepte
 
 The invariants (checked by the concurrency test and the load-test checker):
 1. **Covered:** every bid that was ever `accepted` has a PaymentIntent that was `requires_capture` for at least its amount before the accepting transaction committed.
-2. **Ordered:** accepted bids on an auction, sorted by `auction_version`, strictly increase by at least `min_increment`. Exactly one is `current_high_bid_id`.
-3. **Closed is closed:** no bid is accepted with database time at or after `ends_at`.
-4. **No orphaned holds:** once the outbox and reconciler are idle, the only uncanceled holds are the current high bid's (open auctions) or the captured winner's (settled auctions).
-5. **Idempotent:** retrying a bid request with the same key never creates a second hold or a second bid.
+2. **Ordered:** bids that were ever accepted on an auction, sorted by `auction_version`, start at or above `starting_price` and strictly increase by at least `min_increment`. Exactly one is `current_high_bid_id`.
+3. **Closed is closed:** no bid is accepted with database time at or after `ends_at` as it stood in the accepting transaction. (Soft close, if built, moves `ends_at` only inside that same transaction.)
+4. **No orphaned holds:** once the outbox and reconciler are idle, the only uncanceled holds are the current high bid's on an open auction and the winning bid's on a closed or settled auction (captured once settled). Checkable from slice 3, when the outbox and reconciler exist.
+5. **Idempotent:** retrying a bid request with the same user and key never creates a second hold or a second bid.
 
 | Failure | What happens |
 |---|---|
 | Stripe declines or needs auth | Bid → `rejected` with reason; no hold exists. |
-| Stripe is slow or errors after authorizing | Bid stays `pending`. The client gets a "still confirming" result and then the SSE event. The reconciler finishes it. |
+| Stripe is slow or errors after authorizing | Bid stays `pending`. The bidder gets `202` and polls `GET /bids/:id`. The reconciler finishes it; if it's accepted, every viewer also gets `bid.accepted`. |
 | Process dies between hold and commit | Bid stays `pending` with a live hold. The reconciler commits it if it still qualifies, otherwise marks it `lost_race` and cancels. |
 | Two bids race at the same amount | The first to commit wins. The second rechecks under the lock, becomes `lost_race`, and its hold is canceled through the outbox. |
 | Outbox side effect fails | Retried with backoff. After repeated failures it stays visible in metrics and alerts (§8). |
@@ -158,12 +166,16 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 - gitleaks runs in CI, and `.env.example` holds placeholders only.
 
 ## 10. Testing and CI
-- **Unit:** the auction rules (increment, open window, soft close) as pure functions.
+- **Unit:** the auction rules (starting price, increment, open window, and soft close if built) as pure functions.
 - **Integration:** real Postgres and Redis through Testcontainers locally and service containers in CI.
-  - The **concurrency test** fires a few hundred bids at one auction in parallel through the real handler, with the Stripe fake set for random latency and some declines, then runs the invariant checker.
+  - The **concurrency test** fires a few hundred bids at one auction in parallel through the real handler, with the Stripe fake set for random latency and some declines, then runs the invariant checker. The storm also includes:
+    - bids that straddle `ends_at` while the close job runs (invariant 3);
+    - repeated requests with the same idempotency key (invariant 5);
+    - handlers killed after authorizing and before committing, so the reconciler has to finish them (invariant 4, from slice 3).
+  - **Failure tests:** Redis stopped mid-auction (bids still commit, and a client resumes from `Last-Event-ID`), and a capture that fails at close (the auction stays `closed` and the alert fires).
   - The **fan-out test** runs two server instances, bids against one and listens on the other.
 - **Stripe fake:** an in-process implementation of the PaymentIntent subset used, with injected latency, declines and errors after authorizing (ADR 0006). An opt-in suite (`STRIPE_LIVE_TEST=1`) runs the same flows against real test mode, and is run by hand before each payment-touching merge.
-- **E2E:** Playwright with two browser contexts, sign-in stubbed in test mode, the Stripe test card, a bid war and the close. It runs against the local stack in CI and as a smoke test after deploy.
+- **E2E:** Playwright with two browser contexts, sign-in stubbed in test mode, the Stripe test card, a bid war and the close. It runs against the local stack in CI and as a smoke test after deploy. It also runs an axe accessibility check on the auction page and checks that price changes are announced through `aria-live` (artifact spec).
 - **Load:** k6 scenarios against the local stack. A short run with the checker on every PR; the bigger runs by hand, with the chart in the README.
 - **CI on every PR:** lint, typecheck, unit, integration, short load and checker, Playwright, gitleaks. Merges to `main` deploy after the same checks.
 
@@ -173,7 +185,7 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 ## 11. Acceptance criteria (v1 "done", depth 3)
 1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README.
 2. **Correct under load:** the k6 storm with the invariant checker shows zero violations, and the README has the chart and an honest throughput figure in words.
-3. **Tests and CI:** every category in §10 runs on each PR. Deploys come only from `main`.
+3. **Tests and CI:** every automated category in §10 runs on each PR. The real-test-mode Stripe suite and the bigger k6 runs are by hand, as §10 says. Deploys come only from `main`.
 4. **Traced:** a trace screenshot of one bid end to end, across two instances, is in the README.
 5. **Ops:** the alerts in §8 exist and each has been fired once on purpose. `docs/runbook.md` covers each one, and the budget alarm existed before the first deploy.
 6. **Record:** ADRs for every expensive decision, and each PR says how AI was used and what it got wrong.
@@ -187,7 +199,8 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
    - Docker Compose for Postgres and Redis.
    - Drizzle schema and migrations.
    - The auction rules as pure functions with unit tests.
-2. **Bids under concurrency, no money:** the bid handler and transaction behind a `Payments` port with a fake that always authorizes; the invariant checker; and the concurrency test. This is where the ordering claim is proven.
+   - A seed script that creates auctions through the validated create function.
+2. **Bids under concurrency, no money:** the bid handler and transaction behind a `Payments` port with a fake that always authorizes after a random delay (ADR 0002: without latency the design is never exercised); the invariant checker; and the concurrency test. This is where the ordering claim (invariants 1, 2, 3 and 5) is proven; invariant 4 waits for slice 3.
 3. **Stripe holds:**
    - SetupIntent card setup and the real hold-then-commit.
    - The outbox worker (cancel and capture).
