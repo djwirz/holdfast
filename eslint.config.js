@@ -10,7 +10,9 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.node },
       parserOptions: {
-        projectService: { allowDefaultProject: ['vitest.config.ts', 'eslint.config.js'] },
+        projectService: {
+          allowDefaultProject: ['vitest.config.ts', 'eslint.config.js', '.railway/railway.ts'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },

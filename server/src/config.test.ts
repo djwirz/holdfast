@@ -28,6 +28,15 @@ describe('loadConfig', () => {
     expect(attempt).not.toThrow(/nope/);
   });
 
+  it('requires https in production, where cookies are Secure', () => {
+    expect(() => loadConfig({ ...base, NODE_ENV: 'production' })).toThrow(
+      /APP_ORIGIN: must be https/,
+    );
+    expect(
+      loadConfig({ ...base, NODE_ENV: 'production', APP_ORIGIN: 'https://demo.example' }).NODE_ENV,
+    ).toBe('production');
+  });
+
   it('names missing variables', () => {
     expect(() => loadConfig({})).toThrow(/DATABASE_URL[\s\S]*SESSION_SECRET/);
   });

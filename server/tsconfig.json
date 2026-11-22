@@ -5,6 +5,10 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src", "test", "drizzle.config.ts"],
-  "references": [{ "path": "../shared" }]
+  "include": ["src", "test", "drizzle.config.ts", "scripts"],
+  "references": [
+    {
+      "path": "../shared"
+    }
+  ]
 }

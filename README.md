@@ -2,7 +2,9 @@
 
 Real-time auctions where a bid counts only once a Stripe authorization hold covers it. Bids are ordered in a Postgres transaction and every bidder sees updates live. A load test of near-simultaneous bids proves the ordering holds, and one bid can be traced end to end.
 
-**Status:** slice 4b of 7 (two people in two browsers can bid against each other and see every change live; cards are saved with Stripe Elements and each bid places a real test-mode hold; bids fan out across two server instances through Redis; proven by a storm with injected crashes and failures, and Playwright end to end). Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
+**Live demo:** https://holdfast-production-ba968615.up.railway.app (Stripe test mode: use card 4242 4242 4242 4242; no real money moves).
+
+**Status:** slice 5 of 7 (deploying to Railway: two replicas, Postgres and Redis, deploys from `main` after CI, a smoke test after each deploy; see [docs/deploy.md](docs/deploy.md)). Two people in two browsers can bid against each other and see every change live; each bid places a real test-mode card hold; proven by a storm with injected crashes and failures, and Playwright end to end. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
 
 ## Local development
 

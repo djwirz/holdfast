@@ -1,10 +1,12 @@
 // End-to-end tests (spec §10). The default run, in CI and locally, uses the Stripe fake:
 // two bidders, a bid war, the close, and accessibility. `pnpm test:e2e:stripe` instead runs
 // the card-setup flow against real Stripe test mode with the keys in .env.local.
+// `pnpm test:smoke` checks an already-running deploy at SMOKE_URL and starts nothing.
 import { defineConfig, devices } from '@playwright/test';
 
 const stripe = process.env['E2E_STRIPE'] === '1';
-const WEB = 'http://localhost:4173';
+const smokeUrl = process.env['SMOKE_URL'];
+const WEB = smokeUrl ?? 'http://localhost:4173';
 
 // The server's settings for the run. Values already in the environment win over
 // .env.local, so the fake is forced by blanking the key unless this is the Stripe run.
@@ -21,7 +23,7 @@ const serverEnv: Record<string, string> = {
 
 export default defineConfig({
   testDir: 'e2e',
-  globalSetup: './e2e/global-setup.ts',
+  ...(smokeUrl ? {} : { globalSetup: './e2e/global-setup.ts' }),
   fullyParallel: false,
   workers: 1,
   timeout: 90_000,
@@ -32,7 +34,12 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testIgnore: /stripe\.spec\.ts/,
+      testIgnore: /(stripe|smoke)\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'smoke',
+      testMatch: /smoke\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -41,23 +48,25 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: [
-    {
-      // Two instances behind the round-robin proxy on :3000, as in development.
-      command: 'pnpm --filter @holdfast/server dev',
-      url: 'http://localhost:3000/api/healthz',
-      env: { ...serverEnv, PORT: '3000' },
-      reuseExistingServer: false,
-      timeout: 60_000,
-    },
-    {
-      command:
-        'pnpm --filter @holdfast/web build && pnpm --filter @holdfast/web exec vite preview --port 4173 --strictPort',
-      url: WEB,
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
-  ],
+  webServer: smokeUrl
+    ? []
+    : [
+        {
+          // Two instances behind the round-robin proxy on :3000, as in development.
+          command: 'pnpm --filter @holdfast/server dev',
+          url: 'http://localhost:3000/api/healthz',
+          env: { ...serverEnv, PORT: '3000' },
+          reuseExistingServer: false,
+          timeout: 60_000,
+        },
+        {
+          command:
+            'pnpm --filter @holdfast/web build && pnpm --filter @holdfast/web exec vite preview --port 4173 --strictPort',
+          url: WEB,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        },
+      ],
 });
 
 export { serverEnv };

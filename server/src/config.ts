@@ -31,10 +31,20 @@ const ConfigSchema = z
     GITHUB_CLIENT_ID: z.string().optional(),
     GITHUB_CLIENT_SECRET: z.string().optional(),
     DEV_SIGN_IN: flag,
+    /** The built page to serve from the server itself (production); unset locally. */
+    WEB_DIST: z.string().min(1).optional(),
+    /** Background loop intervals; production polls a little less (two replicas each poll). */
+    OUTBOX_INTERVAL_MS: z.coerce.number().int().min(10).default(100),
+    LIFECYCLE_INTERVAL_MS: z.coerce.number().int().min(50).default(500),
   })
   .refine((c) => !c.DEV_SIGN_IN || c.NODE_ENV !== 'production', {
     message: 'DEV_SIGN_IN is only allowed in development and test',
     path: ['DEV_SIGN_IN'],
+  })
+  // Session cookies are Secure only on https, so production must be served over it.
+  .refine((c) => c.NODE_ENV !== 'production' || c.APP_ORIGIN.startsWith('https://'), {
+    message: 'must be https:// in production',
+    path: ['APP_ORIGIN'],
   });
 
 export type Config = z.infer<typeof ConfigSchema>;

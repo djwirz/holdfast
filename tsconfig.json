@@ -12,6 +12,9 @@
     },
     {
       "path": "e2e"
+    },
+    {
+      "path": "scripts"
     }
   ]
 }

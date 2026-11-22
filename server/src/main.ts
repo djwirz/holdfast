@@ -22,8 +22,14 @@ const { db, pool } = createDb(config.DATABASE_URL, { max: 20 });
 
 // Commands (publish, rate limits) fail fast while Redis is away instead of queueing, so a
 // bid never waits on Redis (spec §7). The subscriber reconnects on its own.
-const redis = new Redis(config.REDIS_URL, { enableOfflineQueue: false, maxRetriesPerRequest: 1 });
-const subscriber = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+// family 0: resolve IPv6 as well as IPv4. Railway's private network hands out IPv6
+// addresses, and ioredis asks for IPv4 only by default.
+const redis = new Redis(config.REDIS_URL, {
+  enableOfflineQueue: false,
+  maxRetriesPerRequest: 1,
+  family: 0,
+});
+const subscriber = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null, family: 0 });
 
 const stripe = config.STRIPE_SECRET_KEY ? stripeClient(config.STRIPE_SECRET_KEY) : null;
 const payments: Payments = stripe
@@ -49,6 +55,7 @@ const app = await buildApp({
   cards: stripe ? stripeCards(db, stripe) : null,
   stripePublishableKey: config.STRIPE_PUBLISHABLE_KEY ?? null,
   stripeWebhook: config.STRIPE_WEBHOOK_SECRET ? { secret: config.STRIPE_WEBHOOK_SECRET } : null,
+  webDist: config.WEB_DIST ?? null,
   logger: true,
 });
 const log = app.log;
@@ -67,9 +74,9 @@ app.addHook('onClose', () => {
 
 const outbox = startOutboxWorker(
   { db, payments, publisher: new RedisPublisher(redis) },
-  { intervalMs: 100, onError },
+  { intervalMs: config.OUTBOX_INTERVAL_MS, onError },
 );
-const lifecycle = startLifecycle({ db }, { intervalMs: 500, onError });
+const lifecycle = startLifecycle({ db }, { intervalMs: config.LIFECYCLE_INTERVAL_MS, onError });
 const reconciler = setInterval(() => {
   reconcileOnce({ db, payments }).catch(onError);
 }, 5_000);

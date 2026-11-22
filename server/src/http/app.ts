@@ -1,9 +1,11 @@
 // The HTTP API (spec §6) on Fastify (ADR 0005). Everything it needs is passed in, so tests
 // build the same app against Testcontainers, two instances at once for the fan-out test.
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import { BidRequestSchema } from '@holdfast/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -60,6 +62,11 @@ export interface AppDeps extends PlaceBidDeps {
   stripePublishableKey?: string | null;
   /** How long a bid request waits before answering 202 pending (spec §6). */
   bidDeadlineMs?: number;
+  /**
+   * The built page (web/dist) to serve from this same origin, so the session cookie and the
+   * origin check need nothing extra (spec §9). Unset locally, where Vite serves the page.
+   */
+  webDist?: string | null;
   rateLimits?: { bids: { max: number; windowMs: number }; auth: { max: number; windowMs: number } };
   logger?: boolean;
 }
@@ -132,7 +139,39 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     return fail(reply, status, 'bad_request', status === 429 ? 'too many requests' : 'bad request');
   });
-  app.setNotFoundHandler((_request, reply) => fail(reply, 404, 'not_found', 'not found'));
+  const webDist = deps.webDist;
+  if (webDist && !existsSync(`${webDist}/index.html`)) {
+    // Fail the start, so the host's health check keeps the previous deploy serving.
+    throw new Error(`WEB_DIST has no index.html: ${webDist}`);
+  }
+  if (webDist) {
+    await app.register(fastifyStatic, {
+      root: webDist,
+      wildcard: true,
+      index: 'index.html',
+      setHeaders(res, path) {
+        // Vite fingerprints everything under assets/, so those never change; the page itself
+        // must be re-fetched so a deploy takes effect at once.
+        res.header(
+          'cache-control',
+          path.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+        );
+      },
+    });
+  }
+  app.setNotFoundHandler((request, reply) => {
+    // Page routes such as /auctions/:id are the page's to handle: send it the app shell.
+    // Anything under /api stays a JSON 404.
+    if (
+      webDist &&
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      !request.url.startsWith('/api/') &&
+      (request.headers.accept ?? '').includes('text/html')
+    ) {
+      return reply.header('cache-control', 'no-cache').sendFile('index.html');
+    }
+    return fail(reply, 404, 'not_found', 'not found');
+  });
 
   const startSession = async (reply: FastifyReply, userId: string) => {
     const token = await createSession(deps.db, userId);
