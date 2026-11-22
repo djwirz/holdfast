@@ -217,5 +217,5 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 2. **Incremental authorization.** Stripe's docs limit it to some card networks and accounts. Try it in test mode during slice 3. If it works, a new ADR could supersede ADR 0006 with one PaymentIntent per bidder that grows.
 3. **Demo access.** Open GitHub sign-in for anyone (it's test mode, so the only cost is abuse) or a passcode gate like Token Keeper's? Recommendation: open, with rate limits, and the ability to switch to a passcode if it's abused. Decide by slice 4.
 4. **Pace of auctions in the demo.** One always-running auction that restarts every few minutes, or a seed script for each demo? Decide by slice 7.
-5. **Skills check.** Confirm the "proves" list against `resume-score.json` once kit step 1 has run (build-plan backlog). Deferred during slice 1, which the list doesn't affect: settle before slice 2.
+5. **Skills check.** Dropped (Dan, after slice 1). The project is justified by its own problem, not by matching a skills score. The guard is the problem-first rule in CLAUDE.md, applied in each slice's plan.
 6. **Case-study angle.** How much comparison to past professional work is safe to make? Public patterns only, no employer names. Decide in slice 7.
