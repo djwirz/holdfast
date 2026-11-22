@@ -71,3 +71,6 @@ Check the hold in the Stripe dashboard: is it still `requires_capture`, and when
 
 | Date | Alert | Drill | Fired | Resolved |
 |---|---|---|---|---|
+| 2026-11-22 | Orphaned holds | `pnpm drill orphan` | 23:29 UTC | 23:31 UTC |
+| 2026-11-22 | Outbox failures | `pnpm drill outbox` | 23:41 UTC | 23:43 UTC |
+| 2026-11-22 | Capture failure | `pnpm drill capture` | 23:46 UTC | 23:48 UTC |
