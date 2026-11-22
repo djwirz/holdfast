@@ -31,6 +31,33 @@ In the Stripe dashboard (test mode) → Developers → Webhooks, add an endpoint
 Copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
 
 ### 5. Variables on the app service
+**The easy way: from your local env files, with nothing pasted.** Put the production-only values in `.env.railway` at the repo root. It's gitignored and kept out of the image, like `.env.local`.
+
+```text
+GITHUB_CLIENT_ID=…
+GITHUB_CLIENT_SECRET=…
+STRIPE_WEBHOOK_SECRET=whsec_…   # the dashboard endpoint's secret, not `stripe listen`'s
+```
+
+The Stripe test keys come from `.env.local` unless `.env.railway` overrides them. Then:
+
+```bash
+brew install railway
+railway login
+railway link              # pick the project and environment
+pnpm railway:env --service <app service name> --domain <domain> --dry-run
+pnpm railway:env --service <app service name> --domain <domain>
+```
+
+What the script does:
+- **Checks first:** test-mode Stripe keys only, and every required value present.
+- **One change:** sets everything in one call, so one redeploy.
+- **Prints variable names only.**
+- **Session secret:** it creates `SESSION_SECRET` once and never replaces it, since a new one would rename every bidder mid-auction.
+- **Doesn't print values:** it never runs a bare `railway variables`, which would.
+
+The table below is what it sets, for setting them by hand instead.
+
 | Variable | What it is | Where it comes from |
 |---|---|---|
 | `NODE_ENV` | `production` | type it |

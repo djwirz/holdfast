@@ -11,3 +11,4 @@ test-results/
 *.log
 *.tsbuildinfo
 e2e/dist/
+scripts/dist/

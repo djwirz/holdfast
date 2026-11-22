@@ -22,7 +22,8 @@
     "dev:server": "pnpm --filter @holdfast/server dev",
     "test:e2e": "playwright test --project e2e",
     "test:e2e:stripe": "E2E_STRIPE=1 playwright test --project e2e-stripe",
-    "test:smoke": "playwright test --project smoke"
+    "test:smoke": "playwright test --project smoke",
+    "railway:env": "node scripts/railway-env.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
