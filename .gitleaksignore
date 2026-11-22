@@ -1,4 +1,6 @@
 # Reviewed false positives only. Each line is a finding's fingerprint, with why.
-# A made-up "sk_live_supersecret" in a test that checks config refuses live keys; not a key.
-# Replaced in the next commit; this entry covers the commit that introduced it.
+# A made-up live-key string in a test that checks config refuses live keys; not a key.
+# Replaced by commit e41111b; this entry covers the commit that introduced it.
 92524d32af1874cb0db315a740fa899bac59fcdc:server/src/config.test.ts:stripe-access-token:26
+# The note above quoted that made-up string in commit e41111b; removed since.
+e41111bccafd2a2f3eca6cb452781373555edc3c:.gitleaksignore:stripe-access-token:2
