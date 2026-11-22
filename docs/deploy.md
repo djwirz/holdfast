@@ -1,6 +1,6 @@
 # Deploying the demo
 
-The demo runs on Railway (ADR 0007): one service with two replicas built from the `Dockerfile`, plus Railway Postgres and Redis. Deploy settings are in `railway.json`. This page covers what only a person with the accounts can do, and how to operate it.
+The demo runs on Railway (ADR 0007): one service with two replicas built from the `Dockerfile`, plus Railway Postgres and Redis. Deploy settings are in `.railway/railway.ts`, Railway's infrastructure-as-code file. This page covers what only a person with the accounts can do, and how to operate it.
 
 Secrets go in Railway's variables, never in the repo, chat, logs or PR text.
 
@@ -14,7 +14,9 @@ Secrets go in Railway's variables, never in the repo, chat, logs or PR text.
 3. Nothing is deployed until this exists (CLAUDE.md, spec §3).
 
 ### 2. Project and services
-1. New project → **Deploy from GitHub repo** → this repository. Railway reads `railway.json`: Dockerfile build, two replicas, health check at `/api/healthz`, migrate and seed before each deploy.
+1. New project → **Deploy from GitHub repo** → this repository.
+   - Railway doesn't read `.railway/railway.ts` on its own. Apply it once the project is linked (step 5): `pnpm exec railway config plan`, check that nothing is destroyed, then `pnpm exec railway config apply`.
+   - That sets the Dockerfile build, two replicas, the health check at `/api/healthz`, migrate and seed before each deploy, and deploying `main` only after CI passes.
 2. Add **Postgres** and **Redis** to the project (Railway's templates).
 3. On the app service, under **Networking**, generate a public domain. It's `APP_ORIGIN` below.
 
@@ -93,7 +95,8 @@ The table below is what it sets, for setting them by hand instead.
   ```bash
   SMOKE_URL=https://<domain> pnpm test:smoke
   ```
-- **Migrations** run before every deploy (`preDeployCommand`). If one fails, the deploy stops and the previous one keeps serving.
+- **Migrations** run before every deploy (`server/src/predeploy.ts`: migrations, then the seed). If one fails, the deploy stops and the previous one keeps serving.
+- **Changing deploy settings:** edit `.railway/railway.ts` in a PR, then run `pnpm exec railway config plan` and `pnpm exec railway config apply`. The file describes the whole project, so leaving something out deletes it; the plan shows any destruction, and apply refuses it unless confirmed. Variables aren't in the file: change them in Railway or with `pnpm railway:env`.
 - **A fresh demo auction:** the seed runs before every deploy and creates the demo auctions if none is live. To run it without a deploy, from a checkout linked to the project (`pnpm exec railway link`):
 
   ```bash

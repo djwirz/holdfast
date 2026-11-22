@@ -47,7 +47,7 @@ Host the demo on Railway: one service with two replicas running the Docker image
 - **Budget alarm:** it's the only option whose budget alarm is part of the platform, and it stops spending rather than only reporting it.
 - **Cost:** keeping the database awake costs a few dollars of RAM, not a plan upgrade.
 - **Two instances** are a setting (`numReplicas`), so the fan-out claim is tested where it's deployed.
-- **Reviewable config:** deploy settings live in `railway.json`, so they're reviewed like code.
+- **Reviewable config:** the project's deploy settings live in `.railway/railway.ts`, so they're reviewed like code. That file is Railway's infrastructure-as-code format: `railway config plan` previews changes, and `railway config apply` makes them. Railway retired the older `railway.json` ("Config as Code"): services created after the change can't use it, and existing files stop being read on 2026-12-01 ([Railway IaC](https://docs.railway.com/infrastructure-as-code)).
 
 ## Consequences
 - **SSE cap:** Railway's edge ends an SSE request after about 15 minutes. That's handled by design:
@@ -59,4 +59,5 @@ Host the demo on Railway: one service with two replicas running the Docker image
 - **Hitting the hard limit takes the demo offline** until it's raised. That's the intended failure for a test-mode demo.
 - **Less control than Fly** over machines and regions. Nothing in Holdfast needs it yet.
 - **The exit stays cheap.** The image is a plain Dockerfile with no Railway-specific code, and configuration is environment variables. Moving means another host, a `DATABASE_URL` and a `REDIS_URL`.
+- **The IaC file describes the whole project.** Leaving out a resource means deleting it, so it was started from `railway config pull` (the real project, Postgres and Redis included). Destructive changes need explicit confirmation. Variables are unmanaged: secrets stay in Railway and never appear in the file.
 - **Revisit** if Railway's pricing or limits change, or if the demo outgrows a hobby budget.
