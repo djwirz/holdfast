@@ -48,6 +48,51 @@ jobs:
       # Testcontainers uses the runner's Docker, the same path as a local run.
       - run: pnpm test:integration
 
+  e2e:
+    name: End-to-end (Playwright, Stripe fake)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The same two-instance server and built page as locally, against service containers.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: holdfast
+          POSTGRES_PASSWORD: holdfast
+          POSTGRES_DB: holdfast
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U holdfast -d holdfast"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:8
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://holdfast:holdfast@localhost:5432/holdfast
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      # No Stripe keys here: the fake runs the bid war. The real-card project is by hand.
+      - run: pnpm test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
   gitleaks:
     name: Secret scan
     runs-on: ubuntu-latest

@@ -111,14 +111,20 @@ describe('a slow hold: 202 pending, then GET /bids/:id', () => {
       let status = 'pending';
       for (let i = 0; i < 50 && status === 'pending'; i++) {
         await new Promise((r) => setTimeout(r, 20));
-        const poll = await slow.app.inject({ url: `/bids/${bid.id}`, headers: { cookie: erin } });
+        const poll = await slow.app.inject({
+          url: `/api/bids/${bid.id}`,
+          headers: { cookie: erin },
+        });
         status = poll.json<{ bid: { status: string } }>().bid.status;
       }
       expect(status).toBe('accepted');
 
       // Someone else asking gets a 404, not a 403: the bid's existence isn't confirmed.
       const frank = await signIn(slow.app, 'frank');
-      const peek = await slow.app.inject({ url: `/bids/${bid.id}`, headers: { cookie: frank } });
+      const peek = await slow.app.inject({
+        url: `/api/bids/${bid.id}`,
+        headers: { cookie: frank },
+      });
       expect(peek.statusCode).toBe(404);
     } finally {
       await slow.close();
@@ -131,7 +137,10 @@ describe('GET /auctions/:id and /me', () => {
     const auction = await openAuction(db, { startingPrice: 1_000, minIncrement: 100 });
     await t.app.inject(bidRequest(alice, auction.id, 1_000));
     await t.app.inject(bidRequest(bob, auction.id, 1_100));
-    const res = await t.app.inject({ url: `/auctions/${auction.id}`, headers: { cookie: bob } });
+    const res = await t.app.inject({
+      url: `/api/auctions/${auction.id}`,
+      headers: { cookie: bob },
+    });
     const snap = res.json<{
       auction: { version: number; minimumNextBid: number };
       currentHigh: { amount: number; bidder: string };
@@ -148,15 +157,15 @@ describe('GET /auctions/:id and /me', () => {
   it('gives each bidder a different alias in every auction', async () => {
     const [a, b] = [await openAuction(db), await openAuction(db)];
     const you = async (id: string) =>
-      (await t.app.inject({ url: `/auctions/${id}`, headers: { cookie: alice } })).json<{
+      (await t.app.inject({ url: `/api/auctions/${id}`, headers: { cookie: alice } })).json<{
         you: string;
       }>().you;
     expect(await you(a.id)).not.toBe(await you(b.id));
   });
 
   it('/me is 401 signed out and shows the login signed in', async () => {
-    expect((await t.app.inject({ url: '/me' })).statusCode).toBe(401);
-    const me = await t.app.inject({ url: '/me', headers: { cookie: alice } });
+    expect((await t.app.inject({ url: '/api/me' })).statusCode).toBe(401);
+    const me = await t.app.inject({ url: '/api/me', headers: { cookie: alice } });
     expect(me.json()).toEqual({
       user: { login: 'dev-alice' },
       hasCard: false,
@@ -165,7 +174,7 @@ describe('GET /auctions/:id and /me', () => {
   });
 
   it('reports health without Redis rather than failing', async () => {
-    const res = await t.app.inject({ url: '/healthz' });
+    const res = await t.app.inject({ url: '/api/healthz' });
     expect(res.json()).toEqual({ ok: true, redis: 'none' });
     expect(ORIGIN).toMatch(/^http/);
   });

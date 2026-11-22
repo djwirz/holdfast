@@ -43,7 +43,7 @@ function signed(body: unknown, secret = SECRET) {
   const header = Stripe.webhooks.generateTestHeaderString({ payload, secret });
   return {
     method: 'POST' as const,
-    url: '/stripe/webhook',
+    url: '/api/stripe/webhook',
     headers: { 'content-type': 'application/json', 'stripe-signature': header },
     payload,
   };

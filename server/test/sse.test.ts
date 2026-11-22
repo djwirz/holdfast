@@ -135,6 +135,24 @@ describe('GET /auctions/:id/events', () => {
     }
   });
 
+  it('lets the server shut down with streams still open', async () => {
+    // Regression: close() waits for open requests, and an SSE stream never ends on its own,
+    // so streams must be ended before close starts or shutdown hangs forever.
+    const closing = await testApp(db, { redisUrl: null });
+    const closingBase = await closing.app.listen({ port: 0, host: '127.0.0.1' });
+    const auction = await openAuction(db);
+    const stream = await openStream(closingBase, auction.id);
+    await stream.next((f) => f.event === 'snapshot');
+    const closed = closing.close().then(() => 'closed' as const);
+    const timeout = new Promise<'hung'>((r) =>
+      setTimeout(() => {
+        r('hung');
+      }, 3_000),
+    );
+    expect(await Promise.race([closed, timeout])).toBe('closed');
+    stream.close();
+  });
+
   it('404s an unknown auction', async () => {
     const stream = await openStream(base, '00000000-0000-4000-8000-000000000000');
     expect(stream.status).toBe(404);

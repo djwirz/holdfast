@@ -22,6 +22,11 @@ const ConfigSchema = z
       .startsWith('sk_test_', 'must be a test-mode key')
       .optional()
       .or(z.literal('').transform(() => undefined)),
+    STRIPE_PUBLISHABLE_KEY: z
+      .string()
+      .startsWith('pk_test_', 'must be a test-mode key')
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     GITHUB_CLIENT_ID: z.string().optional(),
     GITHUB_CLIENT_SECRET: z.string().optional(),

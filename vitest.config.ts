@@ -6,7 +6,7 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['shared/src/**/*.test.ts', 'server/src/**/*.test.ts'],
+          include: ['shared/src/**/*.test.ts', 'server/src/**/*.test.ts', 'web/src/**/*.test.ts'],
         },
       },
       {

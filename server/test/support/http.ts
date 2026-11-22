@@ -67,7 +67,7 @@ export function redisUrl(): string {
 export async function signIn(app: FastifyInstance, login: string): Promise<string> {
   const res = await app.inject({
     method: 'POST',
-    url: '/auth/dev',
+    url: '/api/auth/dev',
     headers: { origin: ORIGIN },
     payload: { login },
   });
@@ -82,7 +82,7 @@ let keys = 0;
 export function bidRequest(cookie: string, auctionId: string, amount: number, key?: string) {
   return {
     method: 'POST' as const,
-    url: `/auctions/${auctionId}/bids`,
+    url: `/api/auctions/${auctionId}/bids`,
     headers: {
       origin: ORIGIN,
       cookie,
@@ -113,7 +113,7 @@ export async function openStream(
   close: () => void;
 }> {
   const controller = new AbortController();
-  const res = await fetch(`${baseUrl}/auctions/${auctionId}/events`, {
+  const res = await fetch(`${baseUrl}/api/auctions/${auctionId}/events`, {
     signal: controller.signal,
     headers: lastEventId === undefined ? {} : { 'last-event-id': String(lastEventId) },
   });
