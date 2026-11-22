@@ -30,7 +30,7 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 - **Proxy or maximum bidding.** Each bid is one fixed amount. (A later ADR could put one hold on a bidder's maximum.)
 - **Seller payouts.** No Stripe Connect. The site is the seller.
 - **3-D Secure challenges.** Bids are confirmed off-session. A card that needs authentication gets the bid rejected with a clear reason. The card-setup step does handle 3DS, because Stripe Elements does that for free.
-- **Auctions longer than a hold lasts.** Online card authorizations are short-lived (Stripe documents about seven days). Demo auctions last minutes to hours, and creation refuses anything over a day.
+- **Auctions longer than a hold lasts.** Online card authorizations are short-lived: Stripe documents 7 days, and each charge's `capture_before` gives the actual expiry ([Stripe: place a hold](https://docs.stripe.com/payments/place-a-hold-on-a-payment-method)). Demo auctions last minutes to hours, and creation refuses anything over a day.
 - **Multi-currency, taxes, shipping.**
 - **Open-ended scale.** The load test proves correctness and gives an honest throughput figure for one auction. Sharding and multi-region are out.
 - **Multiple environments.** One deployed environment, `demo`.
@@ -82,8 +82,8 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 
 ### Components
 - **Bid handler.** Runs the flow in ADR 0002. The Stripe call happens outside any transaction or lock, so a slow authorization never blocks other bidders.
-- **Outbox worker.** Reads outbox rows written in the same transaction as the state change (ADR 0003) and does the side effects: cancel a hold, capture the winner, publish to Redis. It claims rows with `FOR UPDATE SKIP LOCKED` and is safe on every instance.
-- **Reconciler.** On an interval, settles bids stuck in `pending` longer than a short threshold: it reads their PaymentIntent and either finishes the commit or cancels the hold. It also cancels any `requires_capture` PaymentIntent whose bid is already resolved and is neither the current high nor the winner. It never cancels the hold of a bid that is still `pending` and younger than the threshold, because that bid may be about to commit. It's the backstop for crashes between steps.
+- **Outbox worker.** Reads outbox rows written in the same transaction as the state change (ADR 0003) and does the side effects: cancel a hold, capture the winner, publish to Redis. It claims rows with `FOR UPDATE SKIP LOCKED` as a short lease, so no transaction stays open across a Stripe call and a worker that dies leaves its rows to reappear when the lease runs out. It's safe on every instance. Retryable failures back off exponentially; a permanent failure, or running out of attempts, marks the row `failed_at` for the alerts (§8) instead of retrying forever.
+- **Reconciler.** On an interval, takes over bids stuck in `pending` longer than a short threshold. It sends the authorization again with the bid id as the idempotency key: Stripe replays the original result, so a hold placed before a crash is found, never duplicated. Then it decides the bid exactly as the handler would. The threshold must stay far under Stripe's 24-hour idempotency-key lifetime. As a backstop, it queues a cancellation for any resolved bid that holds money, isn't the current high or the winner, and never had one queued. It never touches a `pending` bid younger than the threshold, because that bid may be about to commit. It's the backstop for crashes between steps.
 - **Resolving a pending bid.** The bid handler and the reconciler both resolve a bid under the auction row lock, and only with `UPDATE … WHERE status = 'pending'`. Whichever gets there first decides; the other sees no row to update and does nothing.
 - **Close job.** Marks auctions `closed` at `ends_at`, using database time, and enqueues the winner's capture.
 - **SSE endpoint.** Sends a snapshot on connect, then events in auction-version order. It resumes from `Last-Event-ID` (ADR 0004).
@@ -95,7 +95,7 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 | `users` | id, github_id, login, stripe_customer_id, default_payment_method_id |
 | `auctions` | id, title, starts_at, ends_at, status (`scheduled`/`open`/`closed`/`settled`), starting_price, min_increment, current_high_bid_id, version |
 | `bids` | id (uuid; also the Stripe idempotency key), auction_id, user_id, idempotency_key (unique per user), amount, status (`pending`/`accepted`/`outbid`/`lost_race`/`rejected`/`won`), reason, payment_intent_id, auction_version (set on accept), created_at, resolved_at |
-| `outbox` | id, kind (`cancel_hold`/`capture`/`publish`), payload (includes the W3C `traceparent`), available_at, attempts, done_at |
+| `outbox` | id, kind (`cancel_hold`/`capture`/`publish`), payload (includes the W3C `traceparent`), available_at, attempts, done_at, failed_at, last_error |
 | `stripe_events` | id (Stripe event id, for dedupe), type, payload, received_at |
 | `sessions` | id, user_id, expires_at |
 
@@ -201,20 +201,17 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
    - The auction rules as pure functions with unit tests.
    - A seed script that creates auctions through the validated create function.
 2. **Bids under concurrency, no money:** the bid handler and transaction behind a `Payments` port with a fake that always authorizes after a random delay (ADR 0002: without latency the design is never exercised); the invariant checker; and the concurrency test. This is where the ordering claim (invariants 1, 2, 3 and 5) is proven; invariant 4 waits for slice 3.
-3. **Stripe holds:**
-   - SetupIntent card setup and the real hold-then-commit.
-   - The outbox worker (cancel and capture).
-   - The reconciler and the close job.
-   - The webhook endpoint.
-   - The Stripe fake with failure injection, plus the opt-in real-test-mode suite.
-4. **Live and visible:** SSE with Redis fan-out, a two-instance local setup, the React auction page, GitHub sign-in, and Playwright with two bidders.
+3. **Holds released and captured**, split in two PRs (Dan, after slice 2):
+   - **3a, against the fake:** the outbox worker (cancel and capture), the close job, the reconciler, the pending deadline, and failure injection in the fake. The storm now runs all of it at once and checks invariant 4 in full.
+   - **3b, real Stripe:** the Stripe adapter behind the same `Payments` port, the opt-in real-test-mode suite, and the incremental-authorization experiment (§13).
+4. **Live and visible:** SSE with Redis fan-out, a two-instance local setup, the React auction page, GitHub sign-in, SetupIntent card setup with Elements, the Stripe webhook endpoint, and Playwright with two bidders. (Card setup and the webhook moved here from slice 3 because both need the HTTP server.)
 5. **First deploy:** budget alarm first, then the host, managed Postgres and Redis, secrets, deploy on merge, and a post-deploy smoke test. Fix what real networking and TLS turn up.
 6. **Load and trace:** k6 scenarios and the checker in CI, OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook.
 7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes.
 
 ## 13. Open questions (settle before slice 1 unless noted)
 1. **Hosting.** Recommendation: one container app on a host that keeps long-lived connections and can run two instances, such as Fly.io. Pair it with Neon (Postgres) and Upstash (Redis). Vercel doesn't fit, because SSE and the background workers need a long-running process. Check current prices and free limits at slice 5 and write the ADR then.
-2. **Incremental authorization.** Stripe's docs limit it to some card networks and accounts. Try it in test mode during slice 3. If it works, a new ADR could supersede ADR 0006 with one PaymentIntent per bidder that grows.
+2. **Incremental authorization.** Stripe's docs list it for Visa, Mastercard and American Express on online payments, with a test card for it (`pm_card_debit_incrementalAuthAuthorized`) ([Stripe: increment an authorization](https://docs.stripe.com/payments/incremental-authorization)). Try it in test mode during slice 3b. If it works, a new ADR could supersede ADR 0006 with one PaymentIntent per bidder that grows.
 3. **Demo access.** Open GitHub sign-in for anyone (it's test mode, so the only cost is abuse) or a passcode gate like Token Keeper's? Recommendation: open, with rate limits, and the ability to switch to a passcode if it's abused. Decide by slice 4.
 4. **Pace of auctions in the demo.** One always-running auction that restarts every few minutes, or a seed script for each demo? Decide by slice 7.
 5. **Skills check.** Dropped (Dan, after slice 1). The project is justified by its own problem, not by matching a skills score. The guard is the problem-first rule in CLAUDE.md, applied in each slice's plan.
