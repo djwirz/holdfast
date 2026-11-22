@@ -13,6 +13,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           include: ['server/test/**/*.test.ts'],
+          globalSetup: ['server/test/support/global-setup.ts'],
           // Starting a Postgres container takes a while on a cold Docker.
           hookTimeout: 120_000,
           testTimeout: 30_000,

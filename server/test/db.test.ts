@@ -1,29 +1,22 @@
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
-import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { InvalidAuctionError, createAuction } from '../src/auctions.ts';
-import { type Db, createDb } from '../src/db/client.ts';
+import type { Db } from '../src/db/client.ts';
 import { runMigrations } from '../src/db/migrate.ts';
 import { auctions, bids, users } from '../src/db/schema.ts';
 import { DEMO_AUCTIONS, seed } from '../src/seed.ts';
+import { type TestDb, freshDb } from './support/db.ts';
 
-let container: StartedPostgreSqlContainer | undefined;
+let testDb: TestDb;
 let db: Db;
-let pool: pg.Pool | undefined;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:17').start();
-  const created = createDb(container.getConnectionUri());
-  db = created.db;
-  pool = created.pool;
-  await runMigrations(db);
+  testDb = await freshDb();
+  db = testDb.db;
 });
 
 afterAll(async () => {
-  // Either may be missing if the container failed to start; don't hide that error.
-  await pool?.end();
-  await container?.stop();
+  await testDb.close();
 });
 
 beforeEach(async () => {

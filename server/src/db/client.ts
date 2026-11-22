@@ -4,8 +4,11 @@ import * as schema from './schema.ts';
 
 export type Db = NodePgDatabase<typeof schema>;
 
-export function createDb(connectionString: string): { db: Db; pool: pg.Pool } {
-  const pool = new pg.Pool({ connectionString });
+export function createDb(
+  connectionString: string,
+  options: { max?: number } = {},
+): { db: Db; pool: pg.Pool } {
+  const pool = new pg.Pool({ connectionString, ...options });
   return { db: drizzle(pool, { schema }), pool };
 }
 

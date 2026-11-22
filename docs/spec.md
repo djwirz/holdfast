@@ -101,7 +101,7 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 
 Money is stored as integer cents. `auctions.version` increments on every accepted bid and close, and it's the SSE event id.
 
-**Bid statuses.** A bid starts `pending`. It becomes `rejected` (Stripe declined or needs authentication), `lost_race` (it no longer qualified under the lock) or `accepted`. An accepted bid becomes `outbid` when a higher bid is accepted, or `won` when the auction closes with it as the current high. A `won` bid stays `won` whether or not capture succeeds; the auction's status says whether it was settled.
+**Bid statuses.** A bid starts `pending`. It becomes `rejected` (it failed the bid rules before any hold was placed, so it never gets one, or Stripe declined or needs authentication), `lost_race` (it no longer qualified under the lock) or `accepted`. An accepted bid becomes `outbid` when a higher bid is accepted, or `won` when the auction closes with it as the current high. A `won` bid stays `won` whether or not capture succeeds; the auction's status says whether it was settled.
 
 **Bid rules.** The first accepted bid must be at least `starting_price`. Every later one must be at least the current high plus `min_increment`. The auction must be `open` and database time before `ends_at`.
 
@@ -114,7 +114,7 @@ Money is stored as integer cents. `auctions.version` increments on every accepte
 - **Webhooks:** `payment_intent.amount_capturable_updated`, `.canceled`, `.succeeded` and `.payment_failed`, deduped by event id.
 
 ## 6. Interfaces
-- `POST /auctions/:id/bids` `{ amount }` → `201 { bid }` with status `accepted`, `lost_race` or `rejected` (with a reason). If the bid isn't resolved within a short deadline (Stripe slow or erroring), → `202 { bid }` with status `pending`, and the client polls the bid until it resolves.
+- `POST /auctions/:id/bids` `{ amount }` → `201 { bid }` with status `accepted`, `lost_race` or `rejected` (with a reason: a rule such as `below_minimum` or `ended`, or the card's decline). If the bid isn't resolved within a short deadline (Stripe slow or erroring), → `202 { bid }` with status `pending`, and the client polls the bid until it resolves.
 - `GET /bids/:id` → the bid, for its own bidder only. This is how the bidder learns a `pending` bid's outcome; the SSE stream is public and carries only accepted bids, so it never shows another bidder's rejection reason.
 - **Idempotency.** Bids take a client-supplied `Idempotency-Key` header, unique per user. A retry with the same key returns the existing bid and never authorizes again. The same key with a different auction or amount → `422`.
 - `GET /auctions/:id` → a snapshot: auction, current high and recent bids, with the `version`.
