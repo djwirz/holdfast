@@ -57,6 +57,43 @@ if (
   process.exit(1);
 }
 
+// A database of its own, made fresh for each drill. The dev database collects failed outbox
+// rows and unsettled auctions from load runs and teeth checks, which would hold the alerts
+// open before the drill breaks anything, and keep them open after it fixes what it broke.
+const baseDb = env('DATABASE_URL');
+if (!baseDb) {
+  console.error('Needs DATABASE_URL in .env.local (the docker compose Postgres).');
+  process.exit(1);
+}
+const DRILL_DB = 'holdfast_drill';
+for (const sql of [
+  `drop database if exists ${DRILL_DB} with (force)`,
+  `create database ${DRILL_DB}`,
+]) {
+  execFileSync(
+    'docker',
+    [
+      'compose',
+      'exec',
+      '-T',
+      'postgres',
+      'sh',
+      '-c',
+      `psql -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "${sql}"`,
+    ],
+    { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] },
+  );
+}
+const drillDbUrl = new URL(baseDb);
+drillDbUrl.pathname = `/${DRILL_DB}`;
+// Every child (the stack, the seed, the requeue) inherits it, and --env-file never overrides
+// a variable that's already set.
+process.env['DATABASE_URL'] = drillDbUrl.toString();
+execFileSync(process.execPath, ['src/db/migrate-cli.ts'], {
+  cwd: `${root}/server`,
+  stdio: ['ignore', 'ignore', 'inherit'],
+});
+
 const API = 'http://localhost:3000';
 const FAKE = 'http://127.0.0.1:4010';
 const ORIGIN = 'http://localhost:3000';
@@ -158,6 +195,18 @@ try {
     1_000,
   );
   log(`drill "${drill}": stack up, telemetry to Grafana as job holdfast-drill`);
+  // Start from normal, so "fired" can only mean this drill's break (an earlier drill's alert
+  // takes a minute or two to clear once the fresh database reports zero).
+  await until(
+    `"${rule}" to read normal before the drill`,
+    async () => {
+      const state = await alertState();
+      log(`  ${rule} before the break: ${state}`);
+      return state === 'normal' || state === 'inactive';
+    },
+    10 * 60_000,
+    30_000,
+  );
   await fetch(`${FAKE}/faults`, {
     method: 'POST',
     body: JSON.stringify({ cancel: 'ok', capture: 'ok', ...faults }),
