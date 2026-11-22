@@ -17,7 +17,8 @@
     "test:live": "STRIPE_LIVE_TEST=1 vitest run --project live",
     "db:generate": "pnpm --filter @holdfast/server db:generate",
     "db:migrate": "pnpm --filter @holdfast/server db:migrate",
-    "seed": "pnpm --filter @holdfast/server seed"
+    "seed": "pnpm --filter @holdfast/server seed",
+    "dev:server": "pnpm --filter @holdfast/server dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
