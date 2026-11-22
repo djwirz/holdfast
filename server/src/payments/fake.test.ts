@@ -62,3 +62,75 @@ describe('seededRandom', () => {
     expect(xs.every((x) => x >= 0 && x < 1)).toBe(true);
   });
 });
+
+describe('FakePayments failures and effects', () => {
+  it('throws on a transient error and remembers nothing, so a retry can succeed', async () => {
+    let first = true;
+    const payments = new FakePayments({
+      decide: () => {
+        if (first) {
+          first = false;
+          return { error: 'transient' };
+        }
+        return { approve: true };
+      },
+    });
+    await expect(payments.authorize(req('k1'))).rejects.toThrow(/timed out/);
+    expect(payments.intents.size).toBe(0);
+    expect(await payments.authorize(req('k1'))).toMatchObject({ ok: true });
+  });
+
+  it('places the hold then throws on error_after_authorize; a retry finds that hold', async () => {
+    const payments = new FakePayments({ decide: () => ({ error: 'after_authorize' }) });
+    await expect(payments.authorize(req('k1'))).rejects.toThrow(/response was lost/);
+    expect(payments.intents.size).toBe(1);
+    const retry = await payments.authorize(req('k1'));
+    expect(retry).toMatchObject({ ok: true, paymentIntentId: [...payments.intents.keys()][0] });
+    expect(payments.intents.size).toBe(1);
+  });
+
+  it('cancels idempotently and refuses to cancel a captured hold', async () => {
+    const payments = new FakePayments();
+    const a = await payments.authorize(req('k1'));
+    const b = await payments.authorize(req('k2'));
+    if (!a.ok || !b.ok) throw new Error('expected approvals');
+    expect(await payments.cancel(a.paymentIntentId, { idempotencyKey: 'c1' })).toEqual({
+      ok: true,
+    });
+    expect(await payments.cancel(a.paymentIntentId, { idempotencyKey: 'c1' })).toEqual({
+      ok: true,
+    });
+    expect((await payments.retrieve(a.paymentIntentId))?.status).toBe('canceled');
+    await payments.capture(b.paymentIntentId, { amount: 1_000, idempotencyKey: 'p2' });
+    expect(await payments.cancel(b.paymentIntentId, { idempotencyKey: 'c2' })).toMatchObject({
+      ok: false,
+      retryable: false,
+    });
+  });
+
+  it('captures idempotently and refuses a canceled hold', async () => {
+    const payments = new FakePayments();
+    const a = await payments.authorize(req('k1'));
+    if (!a.ok) throw new Error('expected approval');
+    const capture = () =>
+      payments.capture(a.paymentIntentId, { amount: 1_000, idempotencyKey: 'p1' });
+    expect(await capture()).toEqual({ ok: true });
+    expect(await capture()).toEqual({ ok: true });
+    expect((await payments.retrieve(a.paymentIntentId))?.status).toBe('succeeded');
+  });
+
+  it('injects effect faults', async () => {
+    const payments = new FakePayments({
+      effectFault: (op) =>
+        op === 'cancel' ? { retryable: true, reason: 'rate_limited' } : undefined,
+    });
+    const a = await payments.authorize(req('k1'));
+    if (!a.ok) throw new Error('expected approval');
+    expect(await payments.cancel(a.paymentIntentId, { idempotencyKey: 'c1' })).toEqual({
+      ok: false,
+      retryable: true,
+      reason: 'rate_limited',
+    });
+    expect((await payments.retrieve(a.paymentIntentId))?.status).toBe('requires_capture');
+  });
+});

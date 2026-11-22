@@ -4,7 +4,7 @@ import { type AuctionState, type Cents, checkBid, isCents } from '@holdfast/shar
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.ts';
 import { auctions, bids, outbox } from '../db/schema.ts';
-import type { AuthorizeResult, Payments } from '../payments/port.ts';
+import { type AuthorizeResult, type Payments, TransientPaymentsError } from '../payments/port.ts';
 
 export type Bid = typeof bids.$inferSelect;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -12,6 +12,29 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 export interface PlaceBidDeps {
   db: Db;
   payments: Payments;
+  /**
+   * Test-only fault injection. Nothing in production sets it. `afterAuthorize` may throw
+   * a SimulatedCrash to stand in for the process dying between hold and commit (spec §7).
+   */
+  faults?: { afterAuthorize?: (bid: Bid) => void };
+  /** Errors from work still running after the deadline returned the bid as pending. */
+  onBackgroundError?: (e: unknown) => void;
+}
+
+export interface PlaceBidOptions {
+  /**
+   * How long to wait for the hold and the decision before returning the bid as `pending`
+   * (spec §6). The work carries on; if this process dies, the reconciler finishes it.
+   */
+  deadlineMs?: number;
+}
+
+/** Thrown by a test's fault hook to simulate the process dying mid-bid. */
+export class SimulatedCrash extends Error {
+  constructor() {
+    super('simulated crash between hold and commit');
+    this.name = 'SimulatedCrash';
+  }
 }
 
 export interface PlaceBidInput {
@@ -88,8 +111,12 @@ async function dbNow(db: Db | Tx): Promise<Date> {
   return new Date(ms);
 }
 
-export async function placeBid(deps: PlaceBidDeps, input: PlaceBidInput): Promise<Bid> {
-  const { db, payments } = deps;
+export async function placeBid(
+  deps: PlaceBidDeps,
+  input: PlaceBidInput,
+  options: PlaceBidOptions = {},
+): Promise<Bid> {
+  const { db } = deps;
   if (!isCents(input.amount)) {
     // The column is an integer: a malformed amount can't be stored, so it can't be claimed.
     throw new RangeError(`not a valid amount in cents: ${String(input.amount)}`);
@@ -138,16 +165,47 @@ export async function placeBid(deps: PlaceBidDeps, input: PlaceBidInput): Promis
   }
   if (claimed.status === 'rejected') return claimed;
 
+  // Steps 2 and 3 may outlast the deadline. A transient payment error or a crash leaves the
+  // bid pending, which is the reconciler's job, not an error for the bidder.
+  const work = resumeBid(deps, claimed).catch(async (e: unknown) => {
+    if (e instanceof TransientPaymentsError || e instanceof SimulatedCrash) {
+      return current(db, claimed.id);
+    }
+    throw e;
+  });
+  if (options.deadlineMs === undefined) return work;
+
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    timer = setTimeout(() => {
+      resolve('deadline');
+    }, options.deadlineMs);
+  });
+  const first = await Promise.race([work, deadline]);
+  clearTimeout(timer);
+  if (first !== 'deadline') return first;
+  work.catch(deps.onBackgroundError ?? (() => undefined));
+  return current(db, claimed.id);
+}
+
+/**
+ * Steps 2 and 3 for a pending bid: authorize with the bid id as the idempotency key, then
+ * decide under the lock. The reconciler calls this for stale pending bids: the payment
+ * provider replays the original authorization for the same key, so a hold placed before a
+ * crash is found, never duplicated.
+ */
+export async function resumeBid(deps: PlaceBidDeps, bid: Bid): Promise<Bid> {
+  const { db, payments } = deps;
   // 2. Authorize outside any transaction or lock: a slow card never blocks other bidders.
   const auth = await payments.authorize({
-    idempotencyKey: claimed.id,
-    userId: input.userId,
-    amount,
-    metadata: { bidId: claimed.id, auctionId: input.auctionId },
+    idempotencyKey: bid.id,
+    userId: bid.userId,
+    amount: bid.amount as Cents,
+    metadata: { bidId: bid.id, auctionId: bid.auctionId },
   });
 
   if (!auth.ok) {
-    return resolvePending(db, claimed, {
+    return resolvePending(db, bid, {
       status: 'rejected',
       reason: auth.reason,
       resolvedAt: await dbNow(db),
@@ -157,12 +215,12 @@ export async function placeBid(deps: PlaceBidDeps, input: PlaceBidInput): Promis
   await db
     .update(bids)
     .set({ paymentIntentId: auth.paymentIntentId })
-    .where(and(eq(bids.id, claimed.id), eq(bids.status, 'pending')));
+    .where(and(eq(bids.id, bid.id), eq(bids.status, 'pending')));
+  const withIntent = { ...bid, paymentIntentId: auth.paymentIntentId };
+  deps.faults?.afterAuthorize?.(withIntent);
 
   // 3. Decide under the auction row lock.
-  return db.transaction((tx) =>
-    decide(tx, { ...claimed, paymentIntentId: auth.paymentIntentId }, auth),
-  );
+  return db.transaction((tx) => decide(tx, withIntent, auth));
 }
 
 async function decide(
@@ -184,14 +242,19 @@ async function decide(
   const covered = auth.amountCapturable >= bid.amount;
 
   if (!rules.ok || !covered) {
-    const lost = await resolvePending(tx, bid, {
-      status: 'lost_race',
-      reason: rules.ok ? 'not_covered' : rules.reason,
-      resolvedAt: now,
-    });
-    if (lost.status === 'lost_race') {
-      await tx.insert(outbox).values(cancelHold(bid, auth.paymentIntentId));
-    }
+    const [lost] = await tx
+      .update(bids)
+      .set({
+        status: 'lost_race',
+        reason: rules.ok ? 'not_covered' : rules.reason,
+        resolvedAt: now,
+      })
+      .where(and(eq(bids.id, bid.id), eq(bids.status, 'pending')))
+      .returning();
+    // Only the call that resolved the bid queues its cancellation. If the handler and the
+    // reconciler both decide it, the second sees no pending row and must add nothing.
+    if (!lost) return current(tx, bid.id);
+    await tx.insert(outbox).values(cancelHold(bid, auth.paymentIntentId));
     return lost;
   }
 

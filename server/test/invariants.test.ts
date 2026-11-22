@@ -8,8 +8,10 @@ import type { Db } from '../src/db/client.ts';
 import { auctions, bids, outbox } from '../src/db/schema.ts';
 import { type Violation, checkInvariants } from '../src/invariants.ts';
 import { FakePayments } from '../src/payments/fake.ts';
+import { tickLifecycleOnce } from '../src/lifecycle.ts';
 import { openAuction } from './support/auctions.ts';
 import { type TestDb, createUsers, freshDb } from './support/db.ts';
+import { settle } from './support/settle.ts';
 
 let testDb: TestDb;
 let db: Db;
@@ -127,9 +129,11 @@ describe('checkInvariants catches', () => {
     onlyInvariant(await h.check(), 4);
   });
 
-  it('5: a bid sent to authorize twice', async () => {
+  it('5: a second hold created for one bid', async () => {
     const h = await validHistory();
-    h.payments.callsByKey.set(h.b1.id, 2);
+    const original = h.payments.intents.get(h.b1.paymentIntentId ?? '');
+    if (!original) throw new Error('no intent');
+    h.payments.intents.set('pi_second', { ...original, id: 'pi_second' });
     onlyInvariant(await h.check(), 5);
   });
 
@@ -138,5 +142,58 @@ describe('checkInvariants catches', () => {
     await expect(
       db.update(bids).set({ paymentIntentId: h.b2.paymentIntentId }).where(eq(bids.id, h.b1.id)),
     ).rejects.toThrow();
+  });
+});
+
+describe('checkInvariants with the outbox idle catches (invariant 4, full form)', () => {
+  async function settledHistory(close: boolean) {
+    const h = await validHistory();
+    if (close) {
+      await db
+        .update(auctions)
+        .set({
+          endsAt: sql`(select max(resolved_at) from bids where auction_id = ${h.auction.id}) + interval '1 millisecond'`,
+        })
+        .where(eq(auctions.id, h.auction.id));
+      await tickLifecycleOnce({ db });
+    }
+    await settle({ db, payments: h.payments });
+    const check = () =>
+      checkInvariants(db, h.payments, {
+        auctionId: h.auction.id,
+        audit: h.payments,
+        outboxIdle: true,
+      });
+    expect(await check()).toEqual([]);
+    return { ...h, check };
+  }
+
+  it("a loser's hold that was never actually released", async () => {
+    const h = await settledHistory(false);
+    const intent = h.payments.intents.get(h.b1.paymentIntentId ?? '');
+    if (!intent) throw new Error('no intent');
+    h.payments.intents.set(intent.id, { ...intent, status: 'requires_capture' });
+    onlyInvariant(await h.check(), 4);
+  });
+
+  it("a settled auction whose winner's hold was never captured", async () => {
+    const h = await settledHistory(true);
+    const [auction] = await db.select().from(auctions).where(eq(auctions.id, h.auction.id));
+    expect(auction?.status).toBe('settled');
+    const intent = h.payments.intents.get(h.b3.paymentIntentId ?? '');
+    if (!intent) throw new Error('no intent');
+    h.payments.intents.set(intent.id, { ...intent, status: 'requires_capture' });
+    onlyInvariant(await h.check(), 4);
+  });
+
+  it('a bid left pending', async () => {
+    const h = await settledHistory(false);
+    await db.insert(bids).values({
+      auctionId: h.auction.id,
+      userId: users[0] ?? '',
+      idempotencyKey: `inv-${String(++keys)}`,
+      amount: 9_000,
+    });
+    onlyInvariant(await h.check(), 4);
   });
 });

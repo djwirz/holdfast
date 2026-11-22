@@ -217,3 +217,33 @@ describe('placeBid', () => {
     await expectNoViolations(payments, auction.id);
   });
 });
+
+describe('placeBid deadline and transient errors', () => {
+  it('returns pending at the deadline and resolves in the background', async () => {
+    const { payments, deps } = setup({ latency: () => 150 });
+    const auction = await openAuction(db);
+    const bid = await placeBid(
+      deps,
+      { auctionId: auction.id, userId: alice, amount: 2_000, idempotencyKey: key() },
+      { deadlineMs: 20 },
+    );
+    expect(bid.status).toBe('pending');
+    await new Promise((r) => setTimeout(r, 250));
+    const [after] = await db.select().from(bids).where(eq(bids.id, bid.id));
+    expect(after?.status).toBe('accepted');
+    await expectNoViolations(payments, auction.id);
+  });
+
+  it('leaves the bid pending when the authorization response is lost', async () => {
+    const { payments, deps } = setup({ decide: () => ({ error: 'after_authorize' }) });
+    const auction = await openAuction(db);
+    const bid = await placeBid(deps, {
+      auctionId: auction.id,
+      userId: alice,
+      amount: 2_000,
+      idempotencyKey: key(),
+    });
+    expect(bid).toMatchObject({ status: 'pending', paymentIntentId: null });
+    expect(payments.intents.size).toBe(1); // a live hold the reconciler must find
+  });
+});

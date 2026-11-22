@@ -103,13 +103,17 @@ export const outbox = pgTable(
     availableAt: ts('available_at').notNull().defaultNow(),
     attempts: integer('attempts').notNull().default(0),
     doneAt: ts('done_at'),
+    // A row that hit a permanent error or ran out of attempts stops here, visible to
+    // alerts (spec §7, §8) instead of retrying forever.
+    failedAt: ts('failed_at'),
+    lastError: text('last_error'),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [
     // The claim query: undone rows that are due, oldest first.
     index('outbox_due')
       .on(t.availableAt)
-      .where(sql`${t.doneAt} is null`),
+      .where(sql`${t.doneAt} is null and ${t.failedAt} is null`),
   ],
 );
 

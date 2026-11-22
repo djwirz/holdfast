@@ -24,7 +24,15 @@ const EVER_ACCEPTED = new Set(['accepted', 'outbid', 'won']);
 export async function checkInvariants(
   db: Db,
   payments: Payments,
-  options: { auctionId?: string; audit?: PaymentsAudit } = {},
+  options: {
+    auctionId?: string;
+    audit?: PaymentsAudit;
+    /**
+     * Set once the outbox is drained and the reconciler has run: then invariant 4 is checked
+     * in full, against the holds themselves, not only the queued cancellations.
+     */
+    outboxIdle?: boolean;
+  } = {},
 ): Promise<Violation[]> {
   const violations: Violation[] = [];
   const auctionRows = options.auctionId
@@ -63,15 +71,16 @@ export async function checkInvariants(
       const n = (intentsPerBid.get(intent.metadata.bidId) ?? 0) + 1;
       intentsPerBid.set(intent.metadata.bidId, n);
     }
+    // Sending a bid to authorize more than once is allowed: the reconciler replays the key
+    // on purpose. What must never happen is a second hold.
     for (const b of bidRows) {
-      const calls = options.audit.callsByKey.get(b.id) ?? 0;
       const intents = intentsPerBid.get(b.id) ?? 0;
-      if (calls > 1 || intents > 1) {
+      if (intents > 1) {
         violations.push({
           invariant: 5,
           auctionId: b.auctionId,
           bidId: b.id,
-          message: `bid sent to authorize ${String(calls)} times, ${String(intents)} intents created`,
+          message: `${String(intents)} holds created for one bid`,
         });
       }
     }
@@ -105,7 +114,10 @@ export async function checkInvariants(
       }
     }
 
-    // Invariant 2: ordered.
+    // Invariant 2: ordered. While open the high bid is `accepted`; once closed it's `won`,
+    // and the close itself took one more version.
+    const isOpen = auction.status === 'open' || auction.status === 'scheduled';
+    const highStatus = isOpen ? 'accepted' : 'won';
     let previous: (typeof everAccepted)[number] | undefined;
     everAccepted.forEach((b, i) => {
       if (b.auctionVersion !== i + 1) {
@@ -125,21 +137,25 @@ export async function checkInvariants(
       }
       previous = b;
     });
-    const current = everAccepted.filter((b) => b.status === 'accepted');
-    if (everAccepted.length > 0 && current.length !== 1) {
-      fail(2, `${String(current.length)} bids are accepted; expected exactly one`);
+    const current = everAccepted.filter((b) => b.status === 'accepted' || b.status === 'won');
+    if (everAccepted.length > 0 && (current.length !== 1 || current[0]?.status !== highStatus)) {
+      fail(
+        2,
+        `high bids: ${current.map((b) => b.status).join(', ') || 'none'}; expected exactly one ${highStatus}`,
+      );
     }
     const last = everAccepted.at(-1);
-    if ((last?.id ?? null) !== auction.currentHighBidId || (last && last.status !== 'accepted')) {
+    if ((last?.id ?? null) !== auction.currentHighBidId || (last && last.status !== highStatus)) {
       fail(
         2,
         `current_high_bid_id ${String(auction.currentHighBidId)} isn't the last accepted bid ${String(last?.id)}`,
       );
     }
-    if (auction.version !== everAccepted.length) {
+    const expectedVersion = everAccepted.length + (isOpen ? 0 : 1);
+    if (auction.version !== expectedVersion) {
       fail(
         2,
-        `auction version ${String(auction.version)} but ${String(everAccepted.length)} accepted bids`,
+        `auction version ${String(auction.version)}; expected ${String(expectedVersion)} (${String(everAccepted.length)} accepts, ${auction.status})`,
       );
     }
 
@@ -163,6 +179,40 @@ export async function checkInvariants(
       if (isCurrentHigh && cancels > 0) fail(4, 'current high bid has a cancel_hold queued', b.id);
       if (!isCurrentHigh && cancels !== 1) {
         fail(4, `${b.status} bid's hold has ${String(cancels)} cancel_hold rows; expected 1`, b.id);
+      }
+    }
+
+    // Invariant 4, full form: with the outbox and reconciler idle, the only uncanceled holds
+    // are the current high's (open), and the winner's (closed: still held; settled: captured).
+    if (options.outboxIdle) {
+      for (const b of mine) {
+        if (b.status === 'pending') fail(4, 'bid still pending with the reconciler idle', b.id);
+      }
+      const intents: PaymentIntentView[] = [];
+      if (options.audit) {
+        for (const intent of options.audit.intents.values()) {
+          if (intent.metadata.auctionId === auction.id) intents.push(intent);
+        }
+      } else {
+        for (const b of mine) {
+          const intent = b.paymentIntentId ? await payments.retrieve(b.paymentIntentId) : null;
+          if (intent) intents.push(intent);
+        }
+      }
+      for (const intent of intents) {
+        const isHigh = intent.metadata.bidId === auction.currentHighBidId;
+        const expected = !isHigh
+          ? 'canceled'
+          : auction.status === 'settled'
+            ? 'succeeded'
+            : 'requires_capture';
+        if (intent.status !== expected) {
+          fail(
+            4,
+            `hold ${intent.id} is ${intent.status}; expected ${expected} (${isHigh ? 'high bid' : 'not the high bid'}, auction ${auction.status})`,
+            intent.metadata.bidId,
+          );
+        }
       }
     }
   }
