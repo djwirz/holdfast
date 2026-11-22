@@ -42,8 +42,10 @@ const instance = env('GRAFANA_INSTANCE_ID');
 const otlpToken = env('GRAFANA_OTLP_TOKEN');
 const grafanaUrl = env('GRAFANA_URL')?.replace(/\/+$/, '');
 const saToken = env('GRAFANA_SA_TOKEN');
+// The OTLP SDK drops an endpoint it can't parse with only a debug log, and exports nothing.
 if (
   !otlp ||
+  !/^https:\/\/otlp-gateway-[a-z0-9-]+\.grafana\.net\/otlp\/?$/.test(otlp) ||
   !instance ||
   !otlpToken?.startsWith('glc_') ||
   !grafanaUrl ||

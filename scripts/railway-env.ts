@@ -87,14 +87,18 @@ for (const [name, rule] of Object.entries(SECRETS)) {
 }
 // Telemetry (spec §8) to Grafana Cloud's OTLP gateway, when its credentials are in
 // .env.railway. The auth header is built here from the instance id and token, never shown.
+const OTLP_GATEWAY = /^https:\/\/otlp-gateway-[a-z0-9-]+\.grafana\.net\/otlp\/?$/;
 const otlpEndpoint = local['GRAFANA_OTLP_ENDPOINT'];
 const otlpInstance = local['GRAFANA_INSTANCE_ID'];
 const otlpToken = local['GRAFANA_OTLP_TOKEN'];
 if (otlpEndpoint || otlpInstance || otlpToken) {
-  if (!otlpEndpoint?.startsWith('https://') || !otlpInstance || !otlpToken?.startsWith('glc_')) {
+  // The OTLP SDK drops an endpoint it can't parse with only a debug log, and exports nothing.
+  if (!otlpEndpoint || !OTLP_GATEWAY.test(otlpEndpoint)) {
     problems.push(
-      'GRAFANA_OTLP_ENDPOINT (https://…), GRAFANA_INSTANCE_ID and GRAFANA_OTLP_TOKEN (glc_…) go together',
+      'GRAFANA_OTLP_ENDPOINT must be https://otlp-gateway-prod-<region>.grafana.net/otlp',
     );
+  } else if (!otlpInstance || !otlpToken?.startsWith('glc_')) {
+    problems.push('GRAFANA_INSTANCE_ID and GRAFANA_OTLP_TOKEN (glc_…) go with the endpoint');
   } else {
     const basic = Buffer.from(`${otlpInstance}:${otlpToken}`).toString('base64');
     sets.set('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint);
