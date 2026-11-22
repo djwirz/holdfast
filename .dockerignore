@@ -1,0 +1,15 @@
+# Secrets never enter the image; neither does anything the image doesn't run.
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+.git
+.github
+docs
+e2e
+playwright-report
+test-results
+server/test
+**/*.test.ts
+*.md

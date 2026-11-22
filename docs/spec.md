@@ -178,6 +178,7 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 
 ## 9. Security
 - Secrets (Stripe secret and webhook keys, GitHub OAuth secret, session secret) live in the host's secret store and never reach the client or logs.
+- **Production config** is checked at startup: `APP_ORIGIN` must be `https://` (session cookies are `Secure` there), `DEV_SIGN_IN` is refused, Stripe keys must be test mode, and the server won't start without the built page when `WEB_DIST` is set, so a bad deploy fails its health check instead of going live.
 - Webhook signatures are verified on the raw body.
 - Sessions use `HttpOnly`, `Secure`, `SameSite=Lax` cookies, plus an origin check on state-changing requests (`Origin` must equal `APP_ORIGIN`). The cookie carries 32 random bytes and the `sessions` table stores only their SHA-256, so a database copy can't be replayed as a sign-in.
 - GitHub OAuth asks for no scopes (public profile only) and checks a `state` cookie on the callback.
@@ -204,6 +205,8 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 
 ### Local development
 `docker compose up` brings up Postgres and Redis, and `pnpm dev` runs two server instances behind a tiny proxy plus the client. (`pnpm dev:server` runs only the two instances and the round-robin proxy on :3000; `pnpm dev` adds Vite on :5173, which proxies `/api` to it.) The Stripe fake is the default. Set Stripe test keys in `.env.local` to use real test mode, and run `stripe listen` to forward webhooks.
+
+**Deployed** (slice 5, ADR 0007): Railway runs the `Dockerfile` image as two replicas with Postgres and Redis on its private network. The server serves the built page itself, so page and API share one origin. `railway.json` holds the deploy settings: health check, migrate and seed before each deploy. Railway deploys `main` once CI passes, and `.github/workflows/smoke.yml` runs `pnpm test:smoke` against every successful deploy. The account steps, variables and rollback are in `docs/deploy.md`.
 
 ## 11. Acceptance criteria (v1 "done", depth 3)
 1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README.
@@ -236,6 +239,7 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 
 ## 13. Open questions (settle before slice 1 unless noted)
 1. **Hosting.** Recommendation: one container app on a host that keeps long-lived connections and can run two instances, such as Fly.io. Pair it with Neon (Postgres) and Upstash (Redis). Vercel doesn't fit, because SSE and the background workers need a long-running process. Check current prices and free limits at slice 5 and write the ADR then.
+   **Settled in slice 5: Railway, all in one** (Dan; ADR 0007). Fly.io no longer has a free allowance and has no native billing alert or cap. Neon's free tier can't stay asleep under our background loops. Railway has a native hard spending limit with email alerts, and runs the app's two replicas, Postgres and Redis on one bill, at an estimated $5–8 a month.
 2. **Incremental authorization.** Stripe's docs list it for Visa, Mastercard and American Express on online payments, with a test card for it (`pm_card_debit_incrementalAuthAuthorized`) ([Stripe: increment an authorization](https://docs.stripe.com/payments/incremental-authorization)). Try it in test mode during slice 3b. If it works, a new ADR could supersede ADR 0006 with one PaymentIntent per bidder that grows.
    **Settled in slice 3b: keep ADR 0006.** On a new standard-pricing test account, Stripe refuses the whole request, even with `request_incremental_authorization: if_available`: "not eligible for the requested card features" (`payment_intent_invalid_parameter`). It's offered on IC+ pricing. Asking for it would break every bid on a standard account, and anyone forking the project would hit the same wall, so one PaymentIntent per bid stays. The live suite reruns the experiment, so a change in eligibility shows up there.
 3. **Demo access.** Open GitHub sign-in for anyone (it's test mode, so the only cost is abuse) or a passcode gate like Token Keeper's? Recommendation: open, with rate limits, and the ability to switch to a passcode if it's abused. Decide by slice 4.

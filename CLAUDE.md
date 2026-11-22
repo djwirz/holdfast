@@ -3,12 +3,13 @@
 Real-time auctions where a bid counts only once a Stripe test-mode authorization hold covers it. Bids are ordered in a Postgres transaction, every bidder sees updates live, and a load test proves the ordering holds under near-simultaneous bids. Use they/them for Dan.
 
 ## Status
-Slice 4b (the browser: auction page, card setup, Playwright) is in progress; slice 5 (deployed) is next. The spec and ADRs 0001–0006 (PR #1) and slices 1, 2, 3a, 3b and 4a (PRs #2, #4, #5, #6, #7) are merged. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
+Slice 5 (first deploy, on Railway: ADR 0007, `docs/deploy.md`) is in progress; slice 6 (load and trace) is next. The spec and ADRs 0001–0006 (PR #1) and slices 1 through 4b (PRs #2, #4–#8) are merged. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## Commands
 - Node 26 (`.nvmrc`), pnpm via corepack. `docker compose up -d --wait` for Postgres and Redis.
 - `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test:unit`, `pnpm test:integration` (Testcontainers; needs Docker).
 - `pnpm dev`: the page on :5173 (Vite, proxying `/api`) plus `pnpm dev:server`, two server instances (:3001, :3002) behind a round-robin proxy on :3000. Needs `APP_ORIGIN`, `SESSION_SECRET` and `DEV_SIGN_IN=1` in `.env.local`; see `.env.example`.
+- `pnpm test:smoke` with `SMOKE_URL=https://…`: checks a running deploy (health, page, live stream, axe); CI runs it after each deploy. `docker build -t holdfast .` builds the deployed image.
 - `pnpm test:e2e`: Playwright with the fake (CI runs it; needs `docker compose up` locally and `pnpm exec playwright install chromium` once). `pnpm test:e2e:stripe`: the real-card flow, by hand, with the keys in `.env.local`.
 - `pnpm test:live`: the real Stripe test-mode suite, by hand only; needs a `sk_test_` `STRIPE_SECRET_KEY` in `.env.local` and skips without one.
 - The storm test (`server/test/concurrency.test.ts`) prints its seed; replay a failure with `STORM_SEED=<n> pnpm exec vitest run --project integration server/test/concurrency.test.ts`.
