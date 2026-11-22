@@ -5,6 +5,9 @@ packages:
 # None of these need their install scripts: esbuild ships platform binaries as optional
 # dependencies, and ssh2/cpu-features (via Testcontainers) fall back to pure JS.
 allowBuilds:
+  # Its install step downloads the CLI's prebuilt binary from Railway's GitHub releases
+  # (docs/deploy.md); allowed by Dan for slice 5.
+  '@railway/cli': true
   cpu-features: false
   esbuild: false
   protobufjs: false

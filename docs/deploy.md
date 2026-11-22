@@ -49,10 +49,11 @@ STRIPE_WEBHOOK_SECRET=whsec_…   # the dashboard endpoint's secret, not `stripe
 
 The Stripe test keys come from `.env.local` unless `.env.railway` overrides them. Then:
 
+The Railway CLI is a pinned dev dependency, so `pnpm install` brings it; Homebrew has no prebuilt package for every Mac. Run it through `pnpm exec`:
+
 ```bash
-brew install railway
-railway login
-railway link              # pick the project and environment
+pnpm exec railway login
+pnpm exec railway link    # pick the project and environment
 pnpm railway:env --service <app service name> --domain <domain> --dry-run
 pnpm railway:env --service <app service name> --domain <domain>
 ```
@@ -93,10 +94,10 @@ The table below is what it sets, for setting them by hand instead.
   SMOKE_URL=https://<domain> pnpm test:smoke
   ```
 - **Migrations** run before every deploy (`preDeployCommand`). If one fails, the deploy stops and the previous one keeps serving.
-- **A fresh demo auction:** the seed runs before every deploy and creates the demo auctions if none is live. To run it without a deploy, from a machine with the Railway CLI linked to the project:
+- **A fresh demo auction:** the seed runs before every deploy and creates the demo auctions if none is live. To run it without a deploy, from a checkout linked to the project (`pnpm exec railway link`):
 
   ```bash
-  railway run node server/src/seed.ts
+  pnpm exec railway run node server/src/seed.ts
   ```
 - **Roll back:** Railway → Deployments → an earlier successful deploy → **Redeploy**. A migration isn't undone by a rollback. Migrations are written to be additive, so the previous code still runs against the newer schema.
 - **Over budget:** the email alert arrives first. At the hard limit Railway stops the services. Raise or remove the limit to bring them back, and they redeploy on their own.
