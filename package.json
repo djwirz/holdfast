@@ -24,7 +24,9 @@
     "test:e2e:stripe": "E2E_STRIPE=1 playwright test --project e2e-stripe",
     "test:smoke": "playwright test --project smoke",
     "railway:env": "node scripts/railway-env.ts",
-    "stripe:webhook": "node server/scripts/stripe-webhook.ts"
+    "stripe:webhook": "node server/scripts/stripe-webhook.ts",
+    "load": "load/run.sh",
+    "load:stack": "load/stack.sh"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",

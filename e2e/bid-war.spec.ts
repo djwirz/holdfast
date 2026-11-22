@@ -2,7 +2,7 @@
 // other and both see every change live, through the round-robin proxy, so the bid and the
 // stream usually land on different instances and arrive through Redis.
 import { expect, test } from '@playwright/test';
-import { bid, bidder, seedAuction } from './support.ts';
+import { bid, bidder, checkInvariants, seedAuction } from './support.ts';
 
 test('two bidders: a bid war, live on both pages, through to the close', async ({ browser }) => {
   const auction = seedAuction(25);
@@ -46,4 +46,10 @@ test('two bidders: a bid war, live on both pages, through to the close', async (
   for (const page of [alice, bob]) {
     await expect(page.getByTestId('recent-bids').locator('li')).toHaveCount(2);
   }
+
+  // And behind the pages: every hold released or captured, no side effect gave up, and all
+  // five invariants hold, though the bids and their cancellations ran on both instances.
+  const check = checkInvariants(auction.id);
+  expect(check.output).toContain('0 violations');
+  expect(check.ok, check.output).toBe(true);
 });

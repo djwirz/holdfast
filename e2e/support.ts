@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { type Browser, type Page, expect } from '@playwright/test';
 import { serverEnv } from '../playwright.config.ts';
@@ -28,4 +28,22 @@ export async function bid(page: Page, dollars: string): Promise<void> {
   const input = page.getByLabel(/Your bid in dollars/);
   await input.fill(dollars);
   await page.getByRole('button', { name: 'Bid', exact: true }).click();
+}
+
+/**
+ * The invariant checker CLI against the running stack: waits until the auction has settled,
+ * then checks all five invariants with the shared fake's record. Any violation, or any outbox
+ * row that gave up, makes it exit non-zero.
+ */
+export function checkInvariants(auctionId: string): { ok: boolean; output: string } {
+  const run = spawnSync(
+    process.execPath,
+    ['src/check-invariants.ts', '--auction', auctionId, '--wait', '60'],
+    {
+      cwd: resolve(import.meta.dirname, '../server'),
+      env: { ...process.env, ...serverEnv },
+      encoding: 'utf8',
+    },
+  );
+  return { ok: run.status === 0, output: `${run.stdout}${run.stderr}` };
 }
