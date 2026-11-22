@@ -17,10 +17,11 @@ import {
   type PlaceBidDeps,
   placeBid,
 } from '../bids/place-bid.ts';
-import { bids, users } from '../db/schema.ts';
+import { auctions, bids, users } from '../db/schema.ts';
 import type { LiveHub } from '../live/hub.ts';
 import { type Aliaser, snapshot } from '../live/read.ts';
 import { streamAuction } from '../live/sse.ts';
+import type { Cards } from '../payments/cards.ts';
 import { recordStripeEvent } from '../payments/webhook.ts';
 import type { GitHub } from './github.ts';
 import {
@@ -53,6 +54,10 @@ export interface AppDeps extends PlaceBidDeps {
   github?: GitHub | null;
   devSignIn?: boolean;
   stripeWebhook?: { secret: string } | null;
+  /** Card setup through Stripe; null with the fake, which needs no card. */
+  cards?: Cards | null;
+  /** Sent to the page for Elements; only in real-Stripe mode. */
+  stripePublishableKey?: string | null;
   /** How long a bid request waits before answering 202 pending (spec §6). */
   bidDeadlineMs?: number;
   rateLimits?: { bids: { max: number; windowMs: number }; auth: { max: number; windowMs: number } };
@@ -61,6 +66,9 @@ export interface AppDeps extends PlaceBidDeps {
 
 const UuidSchema = z.uuid();
 const IdempotencyKeySchema = z.string().min(1).max(100);
+const FinishSetupSchema = z.strictObject({
+  setupIntentId: z.string().regex(/^seti_[A-Za-z0-9]+$/),
+});
 const DevSignInSchema = z.strictObject({ login: z.string().regex(/^[A-Za-z0-9-]{1,39}$/) });
 
 /** The one error shape clients see. Nothing internal leaks through it. */
@@ -106,7 +114,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (
       request.method !== 'GET' &&
       request.method !== 'HEAD' &&
-      request.url !== '/stripe/webhook' &&
+      request.url !== '/api/stripe/webhook' &&
       request.headers.origin !== deps.appOrigin
     ) {
       return fail(reply, 403, 'forbidden', 'cross-origin request refused');
@@ -141,7 +149,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   };
 
   // --- Health -----------------------------------------------------------------------
-  app.get('/healthz', async (_request, reply) => {
+  app.get('/api/healthz', async (_request, reply) => {
     await deps.db.execute(sql`select 1`);
     // Redis down is reported, not fatal: bids still commit without it.
     return reply.send({ ok: true, redis: deps.redisStatus?.() ?? 'none' });
@@ -150,11 +158,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // --- Sign-in (spec §9) ------------------------------------------------------------
   const github = deps.github;
   if (github) {
-    const redirectUri = `${deps.appOrigin}/auth/github/callback`;
-    app.get('/auth/github', { config: authLimit }, async (_request, reply) => {
+    const redirectUri = `${deps.appOrigin}/api/auth/github/callback`;
+    app.get('/api/auth/github', { config: authLimit }, async (_request, reply) => {
       const state = randomBytes(16).toString('base64url');
       reply.setCookie('holdfast_oauth_state', state, {
-        path: '/auth',
+        path: '/api/auth',
         httpOnly: true,
         sameSite: 'lax',
         secure: secureCookies,
@@ -162,10 +170,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       });
       return reply.redirect(github.authorizeUrl(state, redirectUri));
     });
-    app.get('/auth/github/callback', { config: authLimit }, async (request, reply) => {
+    app.get('/api/auth/github/callback', { config: authLimit }, async (request, reply) => {
       const q = request.query as Record<string, string | undefined>;
       const expected = request.cookies['holdfast_oauth_state'];
-      reply.clearCookie('holdfast_oauth_state', { path: '/auth' });
+      reply.clearCookie('holdfast_oauth_state', { path: '/api/auth' });
       if (q['error']) return reply.redirect('/?signin=denied');
       if (!q['code'] || !q['state'] || !expected || q['state'] !== expected) {
         return fail(reply, 400, 'bad_state', 'sign-in expired or was tampered with; try again');
@@ -180,7 +188,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   if (deps.devSignIn) {
     // Development and tests only; config refuses DEV_SIGN_IN in production, and without
     // the flag this route doesn't exist.
-    app.post('/auth/dev', { config: authLimit }, async (request, reply) => {
+    app.post('/api/auth/dev', { config: authLimit }, async (request, reply) => {
       const body = DevSignInSchema.safeParse(request.body);
       if (!body.success)
         return fail(reply, 400, 'bad_request', 'login must be 1-39 of A-Z, 0-9, -');
@@ -190,14 +198,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     });
   }
 
-  app.post('/auth/logout', async (request, reply) => {
+  app.post('/api/auth/logout', async (request, reply) => {
     const token = request.cookies[SESSION_COOKIE];
     if (token) await deleteSession(deps.db, token);
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
     return reply.code(204).send();
   });
 
-  app.get('/me', async (request, reply) => {
+  app.get('/api/me', async (request, reply) => {
     if (!request.user) return fail(reply, 401, 'unauthenticated', 'sign in first');
     const [row] = await deps.db
       .select({ customer: users.stripeCustomerId, card: users.defaultPaymentMethodId })
@@ -210,8 +218,62 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     });
   });
 
+  // What the page needs to know before anyone signs in: which sign-in and card steps exist.
+  app.get('/api/config', async (_request, reply) =>
+    reply.send({
+      githubSignIn: Boolean(deps.github),
+      devSignIn: Boolean(deps.devSignIn),
+      cardRequired: deps.cardRequired,
+      stripePublishableKey: deps.cardRequired ? (deps.stripePublishableKey ?? null) : null,
+    }),
+  );
+
+  // --- Card setup (spec §5) ---------------------------------------------------------
+  const cards = deps.cards;
+  if (cards) {
+    app.post('/api/me/card/setup', async (request, reply) => {
+      if (!request.user) return fail(reply, 401, 'unauthenticated', 'sign in first');
+      return reply.send(await cards.startSetup(request.user.id));
+    });
+    app.post('/api/me/card', async (request, reply) => {
+      if (!request.user) return fail(reply, 401, 'unauthenticated', 'sign in first');
+      const body = FinishSetupSchema.safeParse(request.body);
+      if (!body.success) return fail(reply, 400, 'bad_request', 'a setupIntentId is required');
+      const outcome = await cards.finishSetup(request.user.id, body.data.setupIntentId);
+      if (outcome === 'refused') {
+        return fail(
+          reply,
+          422,
+          'card_not_saved',
+          'that card setup did not finish for this account',
+        );
+      }
+      return reply.send({ hasCard: true });
+    });
+  }
+
   // --- Auctions and bids (spec §6) --------------------------------------------------
-  app.get('/auctions/:id', async (request, reply) => {
+  app.get('/api/auctions', async (_request, reply) => {
+    // Live and upcoming auctions, and ones that ended in the last day.
+    const rows = await deps.db
+      .select({
+        id: auctions.id,
+        title: auctions.title,
+        status: auctions.status,
+        endsAt: auctions.endsAt,
+        currentHigh: bids.amount,
+      })
+      .from(auctions)
+      .leftJoin(bids, eq(bids.id, auctions.currentHighBidId))
+      .where(sql`${auctions.endsAt} > clock_timestamp() - interval '1 day'`)
+      .orderBy(sql`${auctions.endsAt} desc`)
+      .limit(50);
+    return reply.send({
+      auctions: rows.map((r) => ({ ...r, endsAt: r.endsAt.toISOString() })),
+    });
+  });
+
+  app.get('/api/auctions/:id', async (request, reply) => {
     const id = UuidSchema.safeParse((request.params as { id: string }).id);
     if (!id.success) return fail(reply, 404, 'not_found', 'no such auction');
     const snap = await snapshot(deps.db, deps.alias, id.data, request.user?.id ?? null);
@@ -219,7 +281,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.send(snap);
   });
 
-  app.get('/auctions/:id/events', async (request, reply) => {
+  app.get('/api/auctions/:id/events', async (request, reply) => {
     const id = UuidSchema.safeParse((request.params as { id: string }).id);
     if (!id.success) return fail(reply, 404, 'not_found', 'no such auction');
     const header = request.headers['last-event-id'];
@@ -269,7 +331,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.post(
-    '/auctions/:id/bids',
+    '/api/auctions/:id/bids',
     {
       config: {
         rateLimit: {
@@ -324,7 +386,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
-  app.get('/bids/:id', async (request, reply) => {
+  app.get('/api/bids/:id', async (request, reply) => {
     if (!request.user) return fail(reply, 401, 'unauthenticated', 'sign in first');
     const id = UuidSchema.safeParse((request.params as { id: string }).id);
     if (!id.success) return fail(reply, 404, 'not_found', 'no such bid');
@@ -344,7 +406,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => {
       done(null, body);
     });
-    scope.post('/stripe/webhook', async (request, reply) => {
+    scope.post('/api/stripe/webhook', async (request, reply) => {
       if (!webhook) return fail(reply, 503, 'unavailable', 'webhooks are not configured');
       const signature = request.headers['stripe-signature'];
       let event: Stripe.Event;
@@ -363,8 +425,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     done();
   });
 
-  app.addHook('onClose', () => {
-    // End open streams so shutdown doesn't wait on them; clients reconnect elsewhere.
+  // preClose, not onClose: close() waits for open requests, and an SSE stream never ends
+  // on its own, so ending them after close would never happen. Clients reconnect elsewhere.
+  app.addHook('preClose', () => {
     for (const raw of streams) raw.end();
     streams.clear();
   });

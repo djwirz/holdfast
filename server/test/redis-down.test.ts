@@ -75,8 +75,8 @@ describe('with Redis down', () => {
     // The bid still commits: Postgres is the truth, and rate limiting skips a dead Redis.
     const res = await t.app.inject(bidRequest(alice, auction.id, 1_100));
     expect(res.statusCode).toBe(201);
-    expect((await t.app.inject({ url: '/healthz' })).json()).toMatchObject({ ok: true });
-    expect((await t.app.inject({ url: '/healthz' })).json<{ redis: string }>().redis).not.toBe(
+    expect((await t.app.inject({ url: '/api/healthz' })).json()).toMatchObject({ ok: true });
+    expect((await t.app.inject({ url: '/api/healthz' })).json<{ redis: string }>().redis).not.toBe(
       'ready',
     );
 

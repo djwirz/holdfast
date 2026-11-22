@@ -18,10 +18,15 @@
     "db:generate": "pnpm --filter @holdfast/server db:generate",
     "db:migrate": "pnpm --filter @holdfast/server db:migrate",
     "seed": "pnpm --filter @holdfast/server seed",
-    "dev:server": "pnpm --filter @holdfast/server dev"
+    "dev": "pnpm --parallel --filter @holdfast/server --filter @holdfast/web dev",
+    "dev:server": "pnpm --filter @holdfast/server dev",
+    "test:e2e": "playwright test --project e2e",
+    "test:e2e:stripe": "E2E_STRIPE=1 playwright test --project e2e-stripe"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.65.0",
     "@types/node": "^26.6.6",
     "eslint": "^10.15.0",
     "fast-check": "^4.10.3",

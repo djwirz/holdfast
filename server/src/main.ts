@@ -10,6 +10,7 @@ import { startLifecycle } from './lifecycle.ts';
 import { LiveHub, RedisPublisher } from './live/hub.ts';
 import { aliaser } from './live/read.ts';
 import { startOutboxWorker } from './outbox/worker.ts';
+import { stripeCards } from './payments/cards.ts';
 import { customerFromUsers } from './payments/customers.ts';
 import { FakePayments } from './payments/fake.ts';
 import type { Payments } from './payments/port.ts';
@@ -24,11 +25,9 @@ const { db, pool } = createDb(config.DATABASE_URL, { max: 20 });
 const redis = new Redis(config.REDIS_URL, { enableOfflineQueue: false, maxRetriesPerRequest: 1 });
 const subscriber = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
-const payments: Payments = config.STRIPE_SECRET_KEY
-  ? new StripePayments({
-      client: stripeClient(config.STRIPE_SECRET_KEY),
-      customerFor: customerFromUsers(db),
-    })
+const stripe = config.STRIPE_SECRET_KEY ? stripeClient(config.STRIPE_SECRET_KEY) : null;
+const payments: Payments = stripe
+  ? new StripePayments({ client: stripe, customerFor: customerFromUsers(db) })
   : // The fake is the default (spec §11), slow enough that pending bids are visible.
     new FakePayments({ latency: () => 150 + Math.floor(Math.random() * 350) });
 
@@ -47,6 +46,8 @@ const app = await buildApp({
       ? gitHubOAuth(config.GITHUB_CLIENT_ID, config.GITHUB_CLIENT_SECRET)
       : null,
   devSignIn: config.DEV_SIGN_IN,
+  cards: stripe ? stripeCards(db, stripe) : null,
+  stripePublishableKey: config.STRIPE_PUBLISHABLE_KEY ?? null,
   stripeWebhook: config.STRIPE_WEBHOOK_SECRET ? { secret: config.STRIPE_WEBHOOK_SECRET } : null,
   logger: true,
 });

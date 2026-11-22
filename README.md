@@ -2,7 +2,7 @@
 
 Real-time auctions where a bid counts only once a Stripe authorization hold covers it. Bids are ordered in a Postgres transaction and every bidder sees updates live. A load test of near-simultaneous bids proves the ordering holds, and one bid can be traced end to end.
 
-**Status:** slice 4a of 7 (the server is live: HTTP API, sign-in, and bids streamed to every viewer over SSE, fanned out across two instances through Redis; real Stripe test mode behind the payments port; proven by a storm with injected crashes and failures). The browser page comes in 4b. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
+**Status:** slice 4b of 7 (two people in two browsers can bid against each other and see every change live; cards are saved with Stripe Elements and each bid places a real test-mode hold; bids fan out across two server instances through Redis; proven by a storm with injected crashes and failures, and Playwright end to end). Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
 
 ## Local development
 
@@ -32,12 +32,18 @@ The real Stripe suite is by hand, never in CI. Put a test-mode key (`sk_test_…
 pnpm test:live               # real holds in your Stripe sandbox; skips without a key
 ```
 
-Two server instances behind a round-robin proxy on :3000, with the Stripe fake unless `.env.local` has a test key:
+The page on http://localhost:5173, with two server instances behind a round-robin proxy on :3000. It uses the Stripe fake unless `.env.local` has test keys; with `DEV_SIGN_IN=1` the page offers a dev sign-in, no GitHub app needed:
 
 ```bash
-pnpm dev:server
+pnpm dev
 ```
 
-With `DEV_SIGN_IN=1`, `POST /auth/dev {"login":"ann"}` signs in without GitHub (development only), so `curl` can bid and watch `GET /auctions/:id/events`.
+End to end, as CI runs it (the fake), and the real-card flow by hand:
+
+```bash
+pnpm exec playwright install chromium   # once
+pnpm test:e2e
+pnpm test:e2e:stripe                    # needs sk_test_ and pk_test_ keys in .env.local
+```
 
 After changing `server/src/db/schema.ts`, run `pnpm db:generate` and commit the new migration in `server/drizzle/`.

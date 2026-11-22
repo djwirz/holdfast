@@ -49,17 +49,17 @@ function cookieValue(setCookie: string | string[] | undefined, name: string): st
 describe('GitHub sign-in', () => {
   it('redirects with a state, then signs in on a matching callback', async () => {
     await withApp({ github: fakeGitHub() }, async ({ app }) => {
-      const start = await app.inject({ url: '/auth/github' });
+      const start = await app.inject({ url: '/api/auth/github' });
       expect(start.statusCode).toBe(302);
       const state = new URL(start.headers.location ?? '').searchParams.get('state') ?? '';
       expect(new URL(start.headers.location ?? '').searchParams.get('redirect_uri')).toBe(
-        `${ORIGIN}/auth/github/callback`,
+        `${ORIGIN}/api/auth/github/callback`,
       );
       const stateCookie = cookieValue(start.headers['set-cookie'], 'holdfast_oauth_state') ?? '';
       expect(stateCookie).toMatch(/HttpOnly/);
 
       const back = await app.inject({
-        url: `/auth/github/callback?code=good&state=${state}`,
+        url: `/api/auth/github/callback?code=good&state=${state}`,
         headers: { cookie: stateCookie.split(';')[0] ?? '' },
       });
       expect(back.statusCode).toBe(302);
@@ -67,7 +67,10 @@ describe('GitHub sign-in', () => {
       expect(session).toMatch(/HttpOnly/);
       expect(session).toMatch(/SameSite=Lax/);
 
-      const me = await app.inject({ url: '/me', headers: { cookie: session.split(';')[0] ?? '' } });
+      const me = await app.inject({
+        url: '/api/me',
+        headers: { cookie: session.split(';')[0] ?? '' },
+      });
       expect(me.json()).toMatchObject({ user: { login: 'octo' } });
       const [row] = await db.select().from(users).where(eq(users.githubId, 4242));
       expect(row?.login).toBe('octo');
@@ -77,7 +80,7 @@ describe('GitHub sign-in', () => {
   it('refuses a callback whose state does not match', async () => {
     await withApp({ github: fakeGitHub() }, async ({ app }) => {
       const res = await app.inject({
-        url: '/auth/github/callback?code=good&state=forged',
+        url: '/api/auth/github/callback?code=good&state=forged',
         headers: { cookie: 'holdfast_oauth_state=real' },
       });
       expect(res.statusCode).toBe(400);
@@ -87,7 +90,9 @@ describe('GitHub sign-in', () => {
 
   it('sends a bidder who declined consent back to the page, signed out', async () => {
     await withApp({ github: fakeGitHub() }, async ({ app }) => {
-      const res = await app.inject({ url: '/auth/github/callback?error=access_denied&state=x' });
+      const res = await app.inject({
+        url: '/api/auth/github/callback?error=access_denied&state=x',
+      });
       expect(res.statusCode).toBe(302);
       expect(res.headers.location).toBe('/?signin=denied');
     });
@@ -95,7 +100,7 @@ describe('GitHub sign-in', () => {
 
   it('has no GitHub routes when the app isn’t configured', async () => {
     await withApp({ github: null }, async ({ app }) => {
-      expect((await app.inject({ url: '/auth/github' })).statusCode).toBe(404);
+      expect((await app.inject({ url: '/api/auth/github' })).statusCode).toBe(404);
     });
   });
 });
@@ -105,7 +110,7 @@ describe('dev sign-in', () => {
     await withApp({ devSignIn: false }, async ({ app }) => {
       const res = await app.inject({
         method: 'POST',
-        url: '/auth/dev',
+        url: '/api/auth/dev',
         headers: { origin: ORIGIN },
         payload: { login: 'x' },
       });
@@ -136,7 +141,7 @@ describe('sessions', () => {
   it('ends at expiry and at logout', async () => {
     await withApp({}, async ({ app }) => {
       const cookie = await signIn(app, 'expiry');
-      const me = () => app.inject({ url: '/me', headers: { cookie } });
+      const me = () => app.inject({ url: '/api/me', headers: { cookie } });
       expect((await me()).statusCode).toBe(200);
       await db.update(sessions).set({ expiresAt: sql`clock_timestamp() - interval '1 second'` });
       expect((await me()).statusCode).toBe(401);
@@ -144,11 +149,13 @@ describe('sessions', () => {
       const fresh = await signIn(app, 'logout');
       const out = await app.inject({
         method: 'POST',
-        url: '/auth/logout',
+        url: '/api/auth/logout',
         headers: { origin: ORIGIN, cookie: fresh },
       });
       expect(out.statusCode).toBe(204);
-      expect((await app.inject({ url: '/me', headers: { cookie: fresh } })).statusCode).toBe(401);
+      expect((await app.inject({ url: '/api/me', headers: { cookie: fresh } })).statusCode).toBe(
+        401,
+      );
     });
   });
 
@@ -157,11 +164,11 @@ describe('sessions', () => {
       const cookie = await signIn(app, 'csrf');
       const res = await app.inject({
         method: 'POST',
-        url: '/auth/logout',
+        url: '/api/auth/logout',
         headers: { origin: 'https://evil.example', cookie },
       });
       expect(res.statusCode).toBe(403);
-      expect((await app.inject({ url: '/me', headers: { cookie } })).statusCode).toBe(200);
+      expect((await app.inject({ url: '/api/me', headers: { cookie } })).statusCode).toBe(200);
     });
   });
 });

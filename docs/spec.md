@@ -110,6 +110,9 @@ Money is stored as integer cents. `auctions.version` increments on every accepte
 
 ## 5. Payments: Stripe test mode
 - **Card setup.** On first bid, a SetupIntent with Stripe Elements saves a test card to the user's Customer (`usage: off_session`).
+  - The page uses Stripe's card-only `CardElement`, not the Payment Element: the Payment Element offers every method the account enables (bank debits, wallets), and only a card can carry an off-session hold. `confirmCardSetup` runs 3-D Secure if the card asks for it.
+  - `POST /api/me/card/setup` creates the Customer once (keyed by user) and a SetupIntent, and returns its client secret. `POST /api/me/card` `{ setupIntentId }` saves the card only after the server retrieves the SetupIntent from Stripe and finds it `succeeded` and on this user's Customer; the client's word is never enough.
+  - Card numbers go from the browser to Stripe; they never reach our server.
 - **The hold.** Each bid creates and confirms a PaymentIntent with `capture_method: manual`, `off_session: true`, the saved payment method, and the bid id as the `Idempotency-Key`. Metadata carries the bid and auction ids. Success means status `requires_capture`, with `amount_capturable` at least the bid amount.
 - **One PaymentIntent per bid** (ADR 0006). When a bid is accepted, the hold of the bid it outbid is canceled through the outbox, whoever placed it. A bidder raising their own high bid therefore has two holds for a moment. Incremental authorization was tried in slice 3b and isn't available on a standard account (§13).
 - **Release:** `cancel` with reason `abandoned`. **Capture:** the winner's PaymentIntent, for the bid amount, at close. Each outbox attempt sends its own idempotency key, because a fixed key would replay one `500` for a day. A second attempt that lands on an intent already in the target state counts as success, judged by the intent's status, not the key.
@@ -123,6 +126,10 @@ Money is stored as integer cents. `auctions.version` increments on every accepte
 - **Webhooks:** `payment_intent.amount_capturable_updated`, `.canceled`, `.succeeded` and `.payment_failed`, deduped by event id.
 
 ## 6. Interfaces
+Every API path is under `/api` (slice 4b), so page routes such as `/auctions/:id` and the API share one origin without colliding. The paths below are written without the prefix.
+
+- `GET /auctions` → live and upcoming auctions, and ones that ended in the last day, with the current high.
+- `GET /config` → which sign-in and card steps the page should show, and the publishable key in real-Stripe mode.
 - `POST /auctions/:id/bids` `{ amount }` → `201 { bid }` with status `accepted`, `lost_race` or `rejected` (with a reason: a rule such as `below_minimum` or `ended`, or the card's decline). If the bid isn't resolved within a short deadline (Stripe slow or erroring), → `202 { bid }` with status `pending`, and the client polls the bid until it resolves.
 - `GET /bids/:id` → the bid, for its own bidder only. This is how the bidder learns a `pending` bid's outcome; the SSE stream is public and carries only accepted bids, so it never shows another bidder's rejection reason.
 - **Idempotency.** Bids take a client-supplied `Idempotency-Key` header, unique per user. A retry with the same key returns the existing bid and never authorizes again. The same key with a different auction or amount → `422`.
@@ -190,11 +197,13 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
   - The **fan-out test** runs two server instances, bids against one and listens on the other.
 - **Stripe fake:** an in-process implementation of the PaymentIntent subset used, with injected latency, declines, errors after authorizing, `409`s for a key in flight and replayed `500`s (ADR 0006). An opt-in suite, `pnpm test:live` (`server/test/live/`), runs the same contract against real test mode with the key from `.env.local`, plus a bid war and a burst of ten bids checked by the invariant checker against Stripe's own list of intents. It skips without a `sk_test_` key, is never in CI, and is run by hand before each payment-touching merge.
 - **E2E:** Playwright with two browser contexts, sign-in stubbed in test mode, the Stripe test card, a bid war and the close. It runs against the local stack in CI and as a smoke test after deploy. It also runs an axe accessibility check on the auction page and checks that price changes are announced through `aria-live` (artifact spec).
+  - `pnpm test:e2e` (CI and local): two instances behind the round-robin proxy, the built page, the fake. A bid war through to the close, axe on the home and auction pages, the live region, and a keyboard-only bid.
+  - `pnpm test:e2e:stripe` (by hand, like `pnpm test:live`): card setup in Stripe's iframe against real test mode, a bid with a real hold, and a card that saves but declines when charged.
 - **Load:** k6 scenarios against the local stack. A short run with the checker on every PR; the bigger runs by hand, with the chart in the README.
 - **CI on every PR:** lint, typecheck, unit, integration, short load and checker, Playwright, gitleaks. Merges to `main` deploy after the same checks.
 
 ### Local development
-`docker compose up` brings up Postgres and Redis, and `pnpm dev` runs two server instances behind a tiny proxy plus the client. (`pnpm dev:server` from slice 4a runs the two instances and the round-robin proxy on :3000; the client joins in 4b.) The Stripe fake is the default. Set Stripe test keys in `.env.local` to use real test mode, and run `stripe listen` to forward webhooks.
+`docker compose up` brings up Postgres and Redis, and `pnpm dev` runs two server instances behind a tiny proxy plus the client. (`pnpm dev:server` runs only the two instances and the round-robin proxy on :3000; `pnpm dev` adds Vite on :5173, which proxies `/api` to it.) The Stripe fake is the default. Set Stripe test keys in `.env.local` to use real test mode, and run `stripe listen` to forward webhooks.
 
 ## 11. Acceptance criteria (v1 "done", depth 3)
 1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README.

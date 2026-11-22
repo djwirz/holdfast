@@ -8,7 +8,8 @@
     "db:migrate": "node --env-file-if-exists=../.env.local src/db/migrate-cli.ts",
     "seed": "node --env-file-if-exists=../.env.local src/seed.ts",
     "start": "node --env-file-if-exists=../.env.local src/main.ts",
-    "dev": "node src/dev/two-instances.ts"
+    "dev": "node src/dev/two-instances.ts",
+    "seed:e2e": "node --env-file-if-exists=../.env.local src/seed-e2e.ts"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.2.2",
