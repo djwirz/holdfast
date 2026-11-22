@@ -1,7 +1,7 @@
 // The storm (spec §10): a few hundred near-simultaneous bids on one auction through the
 // real placeBid, while two outbox workers, the lifecycle ticker and the reconciler run
 // alongside, as they would on two server instances. Authorizations are slow, some decline,
-// some lose their response, some handlers "die" between hold and commit, some cancels
+// some lose their response, some hit a replayed 500, some handlers "die" between hold and commit, some cancels
 // fail transiently, keys are retried and the storm straddles ends_at. Once everything is
 // quiet, the checker must report zero violations of every invariant, 4 included.
 import { and, eq, gt, isNotNull } from 'drizzle-orm';
@@ -32,6 +32,9 @@ const MAX_LATENCY_MS = 80;
 const DEADLINE_MS = 60; // some bids come back pending (spec §6)
 const DECLINE_RATE = 0.03;
 const LOST_RESPONSE_RATE = 0.06;
+// Every Nth authorization gets a 500 that Stripe saves and replays for its key; half of
+// them placed a hold first. Every Nth, like the crashes, so every run has some.
+const SERVER_ERROR_EVERY = 15;
 // Only a few dozen bids per storm pass the pre-check and reach the crash point, so a random
 // rate can come up empty. Every Nth one "dies" instead, so every run recovers some crashes.
 const CRASH_EVERY = 12;
@@ -71,9 +74,15 @@ describe(`bid storm (STORM_SEED=${String(seed)})`, () => {
     const crashed = new Set<string>();
     let reachedCommit = 0;
     let cancelCalls = 0;
+    let authorizations = 0;
+    let serverErrors = 0;
     const payments = new FakePayments({
       latency: () => Math.floor(random() * MAX_LATENCY_MS),
       decide: () => {
+        if (++authorizations % SERVER_ERROR_EVERY === 0) {
+          serverErrors++;
+          return { error: 'server_error', created: random() < 0.5 };
+        }
         const r = random();
         if (r < DECLINE_RATE) return { approve: false, reason: 'card_declined' };
         if (r < DECLINE_RATE + LOST_RESPONSE_RATE) return { error: 'after_authorize' };
@@ -258,6 +267,7 @@ describe(`bid storm (STORM_SEED=${String(seed)})`, () => {
         (o) => 'bid' in o && o.request.retryOf && o.request.amount === o.request.retryOf.amount,
       ).length,
       retriedCancels: retriedCancels.length,
+      serverErrors,
       published: publisher.events.length,
     };
     const why = JSON.stringify(summary);
@@ -268,6 +278,7 @@ describe(`bid storm (STORM_SEED=${String(seed)})`, () => {
     expect(summary.crashesRecovered, why).toBe(crashed.size);
     expect(summary.dedupedRetries, why).toBeGreaterThanOrEqual(1);
     expect(summary.retriedCancels, why).toBeGreaterThanOrEqual(1);
+    expect(summary.serverErrors, why).toBeGreaterThanOrEqual(1);
     // Every accept and the close were published.
     expect(summary.published, why).toBe(summary.everAccepted + 1);
     console.log('storm', summary);

@@ -192,7 +192,8 @@ export async function placeBid(
  * Steps 2 and 3 for a pending bid: authorize with the bid id as the idempotency key, then
  * decide under the lock. The reconciler calls this for stale pending bids: the payment
  * provider replays the original authorization for the same key, so a hold placed before a
- * crash is found, never duplicated.
+ * crash is found, never duplicated. A 500 is the exception, since Stripe replays the error
+ * itself; the adapter finds the hold by bid id instead (spec §5).
  */
 export async function resumeBid(deps: PlaceBidDeps, bid: Bid): Promise<Bid> {
   const { db, payments } = deps;

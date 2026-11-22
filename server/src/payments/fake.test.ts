@@ -22,14 +22,27 @@ describe('FakePayments', () => {
   });
 
   it('replays the first result for a repeated key and never makes a second hold', async () => {
-    const payments = new FakePayments({ latency: () => 5 });
-    const [a, b] = await Promise.all([
-      payments.authorize(req('k1')),
-      payments.authorize(req('k1')),
-    ]);
+    const payments = new FakePayments();
+    const a = await payments.authorize(req('k1'));
+    const b = await payments.authorize(req('k1'));
     expect(a).toEqual(b);
     expect(payments.intents.size).toBe(1);
     expect(payments.callsByKey.get('k1')).toBe(2);
+  });
+
+  it('refuses a second request with a key still in flight, as Stripe does (409)', async () => {
+    const payments = new FakePayments({ latency: () => 5 });
+    const [a, b] = await Promise.allSettled([
+      payments.authorize(req('k1')),
+      payments.authorize(req('k1')),
+    ]);
+    expect(a).toMatchObject({ status: 'fulfilled', value: { ok: true } });
+    expect(b).toMatchObject({ status: 'rejected', reason: { message: /idempotency_key_in_use/ } });
+    expect(payments.intents.size).toBe(1);
+    // Nothing was saved for the refused request, so a later retry replays the first.
+    expect(await payments.authorize(req('k1'))).toEqual(
+      a.status === 'fulfilled' ? a.value : undefined,
+    );
   });
 
   it('declines without creating an intent', async () => {
@@ -87,6 +100,24 @@ describe('FakePayments failures and effects', () => {
     const retry = await payments.authorize(req('k1'));
     expect(retry).toMatchObject({ ok: true, paymentIntentId: [...payments.intents.keys()][0] });
     expect(payments.intents.size).toBe(1);
+  });
+
+  it('replays a 500 for its key, and finds the hold by bid id when one was placed', async () => {
+    const payments = new FakePayments({ decide: () => ({ error: 'server_error', created: true }) });
+    const first = await payments.authorize(req('k1'));
+    expect(first).toMatchObject({ ok: true, paymentIntentId: [...payments.intents.keys()][0] });
+    expect(await payments.authorize(req('k1'))).toEqual(first);
+    expect(payments.intents.size).toBe(1);
+  });
+
+  it('turns a 500 that placed no hold into a refusal, not a bid pending for a day', async () => {
+    const payments = new FakePayments({
+      decide: () => ({ error: 'server_error', created: false }),
+    });
+    const refused = { ok: false, reason: 'processing_error' };
+    expect(await payments.authorize(req('k1'))).toEqual(refused);
+    expect(await payments.authorize(req('k1'))).toEqual(refused);
+    expect(payments.intents.size).toBe(0);
   });
 
   it('cancels idempotently and refuses to cancel a captured hold', async () => {

@@ -59,7 +59,7 @@ describe('runOutboxOnce', () => {
 
     expect(result).toEqual({ claimed: 3, done: 3, retried: 0, failed: 0 });
     expect((await payments.retrieve(first.paymentIntentId ?? ''))?.status).toBe('canceled');
-    expect(payments.cancelCalls.get(`cancel_hold:${first.id}`)).toBe(1);
+    expect(payments.cancelCalls.get(`cancel_hold:${first.id}:1`)).toBe(1);
     expect(publisher.events.map((e) => e.event)).toEqual(['bid.accepted', 'bid.accepted']);
     expect(await runOutboxOnce({ db, payments, publisher }, FAST_OUTBOX)).toMatchObject({
       claimed: 0,
