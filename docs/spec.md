@@ -87,6 +87,9 @@ It shows TypeScript and Node.js on a real server, PostgreSQL transactions and lo
 - **Resolving a pending bid.** The bid handler and the reconciler both resolve a bid under the auction row lock, and only with `UPDATE … WHERE status = 'pending'`. Whichever gets there first decides; the other sees no row to update and does nothing.
 - **Close job.** Marks auctions `closed` at `ends_at`, using database time, and enqueues the winner's capture.
 - **SSE endpoint.** Sends a snapshot on connect, then events in auction-version order. It resumes from `Last-Event-ID` (ADR 0004).
+  - **Redis is the doorbell, Postgres is the content.** A message on `auction:<id>` only says that auction changed. Each instance then reads "every event after the last version I sent" from Postgres, once per auction however many clients watch it. Every event is derivable from the tables: an accepted bid keeps its `auction_version`, and a closed auction's version is the close.
+  - So a lost, late or duplicated Redis message can only delay an update, never drop, reorder or invent one. A slow poll covers lost doorbells and Redis being down.
+  - Versions go up by exactly one per accept and per close. A connection that sees a jump reads the gap from Postgres before sending past it, so each client gets every version exactly once, in order.
 - **Webhook endpoint.** Verifies Stripe's signature and records payment-intent events. It uses them to speed up reconciliation, never as the only source of truth.
 
 ### Data model (PostgreSQL)
@@ -123,7 +126,10 @@ Money is stored as integer cents. `auctions.version` increments on every accepte
 - `POST /auctions/:id/bids` `{ amount }` → `201 { bid }` with status `accepted`, `lost_race` or `rejected` (with a reason: a rule such as `below_minimum` or `ended`, or the card's decline). If the bid isn't resolved within a short deadline (Stripe slow or erroring), → `202 { bid }` with status `pending`, and the client polls the bid until it resolves.
 - `GET /bids/:id` → the bid, for its own bidder only. This is how the bidder learns a `pending` bid's outcome; the SSE stream is public and carries only accepted bids, so it never shows another bidder's rejection reason.
 - **Idempotency.** Bids take a client-supplied `Idempotency-Key` header, unique per user. A retry with the same key returns the existing bid and never authorizes again. The same key with a different auction or amount → `422`.
-- `GET /auctions/:id` → a snapshot: auction, current high and recent bids, with the `version`.
+- `GET /auctions/:id` → a snapshot: auction, current high and recent bids, with the `version` and the minimum next bid. Signed in, it also says which alias is yours.
+- **Public identity.** Snapshots and events show a per-auction alias ("Bidder 3f9a", an HMAC of user and auction), never user ids or logins. It's stable within an auction and unlinkable across auctions.
+- `GET /me` → the signed-in login, whether a card is saved, and whether bids need one (real Stripe) or not (the fake). `401` signed out.
+- **Status codes.** `400` bad body or missing `Idempotency-Key`; `401` not signed in; `403` wrong origin; `404` unknown auction, or someone else's bid; `422` key reused for another bid; `429` rate limited. Errors are always `{ error, message }`, with nothing internal in them.
 - `GET /auctions/:id/events` → SSE. Event types `bid.accepted`, `auction.extended` (only if soft close is built) and `auction.closed`. Every event carries the auction `version` as its id.
 - **Creating auctions.** No public endpoint in v1. A seed script creates them through the same validated function the admin page would use (if it's built), so the one-day limit and the rules above hold either way.
 - `POST /stripe/webhook`: Stripe only, signature verified.
@@ -166,9 +172,11 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 ## 9. Security
 - Secrets (Stripe secret and webhook keys, GitHub OAuth secret, session secret) live in the host's secret store and never reach the client or logs.
 - Webhook signatures are verified on the raw body.
-- Sessions use `HttpOnly`, `Secure`, `SameSite=Lax` cookies, plus an origin check on state-changing requests.
+- Sessions use `HttpOnly`, `Secure`, `SameSite=Lax` cookies, plus an origin check on state-changing requests (`Origin` must equal `APP_ORIGIN`). The cookie carries 32 random bytes and the `sessions` table stores only their SHA-256, so a database copy can't be replayed as a sign-in.
+- GitHub OAuth asks for no scopes (public profile only) and checks a `state` cookie on the callback.
+- **Dev sign-in.** `POST /auth/dev` signs in by name, for local development and tests before the GitHub app exists. The route exists only with `DEV_SIGN_IN=1`, and config refuses that flag in production. Dev users get negative GitHub ids, which real accounts never have.
 - Every request body is validated with zod. Amounts are integers within a sane range.
-- Bids are rate-limited per user (Redis, if built) and the auth endpoints per IP.
+- Bids are rate-limited per user and the auth endpoints per IP, in Redis. If Redis is down the limits are skipped rather than blocking bids (§7).
 - gitleaks runs in CI, and `.env.example` holds placeholders only.
 
 ## 10. Testing and CI
@@ -186,7 +194,7 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 - **CI on every PR:** lint, typecheck, unit, integration, short load and checker, Playwright, gitleaks. Merges to `main` deploy after the same checks.
 
 ### Local development
-`docker compose up` brings up Postgres and Redis, and `pnpm dev` runs two server instances behind a tiny proxy plus the client. The Stripe fake is the default. Set Stripe test keys in `.env.local` to use real test mode, and run `stripe listen` to forward webhooks.
+`docker compose up` brings up Postgres and Redis, and `pnpm dev` runs two server instances behind a tiny proxy plus the client. (`pnpm dev:server` from slice 4a runs the two instances and the round-robin proxy on :3000; the client joins in 4b.) The Stripe fake is the default. Set Stripe test keys in `.env.local` to use real test mode, and run `stripe listen` to forward webhooks.
 
 ## 11. Acceptance criteria (v1 "done", depth 3)
 1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README.
@@ -210,7 +218,9 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 3. **Holds released and captured**, split in two PRs (Dan, after slice 2):
    - **3a, against the fake:** the outbox worker (cancel and capture), the close job, the reconciler, the pending deadline, and failure injection in the fake. The storm now runs all of it at once and checks invariant 4 in full.
    - **3b, real Stripe:** the Stripe adapter behind the same `Payments` port, the opt-in real-test-mode suite, and the incremental-authorization experiment (§13).
-4. **Live and visible:** SSE with Redis fan-out, a two-instance local setup, the React auction page, GitHub sign-in, SetupIntent card setup with Elements, the Stripe webhook endpoint, and Playwright with two bidders. (Card setup and the webhook moved here from slice 3 because both need the HTTP server.)
+4. **Live and visible:** SSE with Redis fan-out, a two-instance local setup, the React auction page, GitHub sign-in, SetupIntent card setup with Elements, the Stripe webhook endpoint, and Playwright with two bidders. (Card setup and the webhook moved here from slice 3 because both need the HTTP server.) Split in two PRs (Dan, after slice 3b):
+   - **4a, the server:** the Fastify API, sessions with GitHub and dev sign-in, SSE with Redis fan-out across two instances, the webhook, and the fan-out and Redis-down tests.
+   - **4b, the browser:** the React auction page, Elements card setup with its SetupIntent endpoints, and Playwright with two bidders.
 5. **First deploy:** budget alarm first, then the host, managed Postgres and Redis, secrets, deploy on merge, and a post-deploy smoke test. Fix what real networking and TLS turn up.
 6. **Load and trace:** k6 scenarios and the checker in CI, OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook.
 7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes.
@@ -220,6 +230,7 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 2. **Incremental authorization.** Stripe's docs list it for Visa, Mastercard and American Express on online payments, with a test card for it (`pm_card_debit_incrementalAuthAuthorized`) ([Stripe: increment an authorization](https://docs.stripe.com/payments/incremental-authorization)). Try it in test mode during slice 3b. If it works, a new ADR could supersede ADR 0006 with one PaymentIntent per bidder that grows.
    **Settled in slice 3b: keep ADR 0006.** On a new standard-pricing test account, Stripe refuses the whole request, even with `request_incremental_authorization: if_available`: "not eligible for the requested card features" (`payment_intent_invalid_parameter`). It's offered on IC+ pricing. Asking for it would break every bid on a standard account, and anyone forking the project would hit the same wall, so one PaymentIntent per bid stays. The live suite reruns the experiment, so a change in eligibility shows up there.
 3. **Demo access.** Open GitHub sign-in for anyone (it's test mode, so the only cost is abuse) or a passcode gate like Token Keeper's? Recommendation: open, with rate limits, and the ability to switch to a passcode if it's abused. Decide by slice 4.
+   **Settled in slice 4a: open, with rate limits** (Dan). Anyone with a GitHub account can sign in and bid; bids are limited per user and sign-in per IP. A passcode gate stays the fallback if it's abused.
 4. **Pace of auctions in the demo.** One always-running auction that restarts every few minutes, or a seed script for each demo? Decide by slice 7.
 5. **Skills check.** Dropped (Dan, after slice 1). The project is justified by its own problem, not by matching a skills score. The guard is the problem-first rule in CLAUDE.md, applied in each slice's plan.
 6. **Case-study angle.** How much comparison to past professional work is safe to make? Public patterns only, no employer names. Decide in slice 7.
