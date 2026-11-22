@@ -24,7 +24,15 @@ Create a GitHub OAuth app (GitHub → Settings → Developer settings → OAuth 
 - **Authorization callback URL:** `https://<domain>/api/auth/github/callback`.
 
 ### 4. Stripe webhook (test mode)
-In the Stripe dashboard (test mode) → Developers → Webhooks, add an endpoint:
+**The easy way:** run this, using the test key in `.env.local`:
+
+```bash
+pnpm stripe:webhook --domain <domain>
+```
+
+It creates the endpoint with the four events below and writes its signing secret into `.env.railway` as `STRIPE_WEBHOOK_SECRET` without showing it. Stripe reveals that secret only once, when the endpoint is created. If an endpoint for the URL already exists, the script leaves it alone and says where its secret is.
+
+**By hand:** in the Stripe dashboard (test mode) → Developers → Webhooks, add an endpoint:
 - **URL:** `https://<domain>/api/stripe/webhook`.
 - **Events:** `payment_intent.amount_capturable_updated`, `payment_intent.canceled`, `payment_intent.succeeded`, `payment_intent.payment_failed`.
 
