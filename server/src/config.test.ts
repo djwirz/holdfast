@@ -23,9 +23,9 @@ describe('loadConfig', () => {
   });
 
   it('refuses a live Stripe key without echoing it', () => {
-    const attempt = () => loadConfig({ ...base, STRIPE_SECRET_KEY: 'sk_live_supersecret' });
+    const attempt = () => loadConfig({ ...base, STRIPE_SECRET_KEY: 'sk_live_nope' });
     expect(attempt).toThrow(/STRIPE_SECRET_KEY: must be a test-mode key/);
-    expect(attempt).not.toThrow(/supersecret/);
+    expect(attempt).not.toThrow(/nope/);
   });
 
   it('names missing variables', () => {

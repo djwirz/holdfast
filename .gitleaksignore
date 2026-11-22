@@ -1,0 +1,4 @@
+# Reviewed false positives only. Each line is a finding's fingerprint, with why.
+# A made-up "sk_live_supersecret" in a test that checks config refuses live keys; not a key.
+# Replaced in the next commit; this entry covers the commit that introduced it.
+92524d32af1874cb0db315a740fa899bac59fcdc:server/src/config.test.ts:stripe-access-token:26
