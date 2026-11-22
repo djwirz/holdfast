@@ -103,13 +103,15 @@ if (!prom) {
   process.exit(1);
 }
 
+// An Editor can't read a folder that doesn't exist yet, so Grafana answers 403, not 404:
+// create it unless it reads back. A 409 or 412 means it exists after all.
 const folder = await grafana('GET', `/api/folders/${spec.folderUid}`);
-if (folder.status === 404) {
+if (folder.status !== 200) {
   const made = await grafana('POST', '/api/folders', {
     uid: spec.folderUid,
     title: spec.folderTitle,
   });
-  if (made.status >= 300) {
+  if (made.status >= 300 && made.status !== 409 && made.status !== 412) {
     console.error(`could not create the folder: HTTP ${String(made.status)}`);
     process.exit(1);
   }
