@@ -31,11 +31,13 @@ export function AuctionPage(props: { auctionId: string; me: Me | null; canBid: b
     <main className="auction">
       <h1>{auction.title}</h1>
       <p className={`connection connection-${connection}`}>
-        {connection === 'live'
-          ? 'Live'
-          : connection === 'reconnecting'
-            ? 'Reconnecting…'
-            : 'Connecting…'}
+        {view.result
+          ? 'Ended'
+          : connection === 'live'
+            ? 'Live'
+            : connection === 'reconnecting'
+              ? 'Reconnecting…'
+              : 'Connecting…'}
       </p>
 
       <section className="price" aria-labelledby="price-label">

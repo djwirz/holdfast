@@ -4,8 +4,9 @@ import { type Browser, type Page, expect } from '@playwright/test';
 import { serverEnv } from '../playwright.config.ts';
 
 /** A fresh open auction ending in `seconds`, made with the validated create function. */
-export function seedAuction(seconds: number): { id: string; title: string } {
-  const out = execFileSync(process.execPath, ['src/seed-e2e.ts', String(seconds)], {
+export function seedAuction(seconds: number, title?: string): { id: string; title: string } {
+  const args = ['src/seed-e2e.ts', String(seconds), ...(title ? [title] : [])];
+  const out = execFileSync(process.execPath, args, {
     cwd: resolve(import.meta.dirname, '../server'),
     env: { ...process.env, ...serverEnv },
     encoding: 'utf8',
@@ -46,4 +47,20 @@ export function checkInvariants(auctionId: string): { ok: boolean; output: strin
     },
   );
   return { ok: run.status === 0, output: `${run.stdout}${run.stderr}` };
+}
+
+/** Saves a test card through Stripe's card form on the page (real test mode only). */
+export async function addCard(page: Page, number: string) {
+  await page.getByRole('button', { name: 'Add a card' }).click();
+  // Stripe's card-only element: one iframe with all four fields.
+  const card = page.locator('iframe[title*="card payment input"]').first().contentFrame();
+  await card.getByPlaceholder('Card number').fill(number);
+  await card.getByPlaceholder('MM / YY').fill('12 / 34');
+  await card.getByPlaceholder('CVC').fill('123');
+  const zip = card.getByPlaceholder('ZIP');
+  if (await zip.isVisible().catch(() => false)) await zip.fill('94107');
+  await page.getByRole('button', { name: 'Save card' }).click();
+  await expect(page.getByRole('heading', { name: 'Place a bid' })).toBeVisible({
+    timeout: 30_000,
+  });
 }

@@ -4,7 +4,7 @@
 // `pnpm test:smoke` checks an already-running deploy at SMOKE_URL and starts nothing.
 import { defineConfig, devices } from '@playwright/test';
 
-const stripe = process.env['E2E_STRIPE'] === '1';
+const stripe = process.env['E2E_STRIPE'] === '1' || process.env['DEMO_GIF'] === '1';
 const smokeUrl = process.env['SMOKE_URL'];
 const WEB = smokeUrl ?? 'http://localhost:4173';
 
@@ -34,7 +34,7 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testIgnore: /(stripe|smoke)\.spec\.ts/,
+      testIgnore: /(stripe|smoke|demo)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -45,6 +45,12 @@ export default defineConfig({
     {
       name: 'e2e-stripe',
       testMatch: /stripe\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // By hand: pnpm demo:gif records the README's GIF (real Stripe test mode).
+      name: 'demo',
+      testMatch: /demo\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
   ],

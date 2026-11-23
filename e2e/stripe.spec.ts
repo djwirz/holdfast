@@ -3,8 +3,8 @@
 // checking Stripe's record, and a bid then places a real hold.
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { type Page, expect, test } from '@playwright/test';
-import { bid, bidder, seedAuction } from './support.ts';
+import { expect, test } from '@playwright/test';
+import { addCard, bid, bidder, seedAuction } from './support.ts';
 
 test.skip(process.env['E2E_STRIPE'] !== '1', 'set E2E_STRIPE=1 (pnpm test:e2e:stripe)');
 
@@ -18,21 +18,6 @@ test.afterAll(() => {
     stdio: 'inherit',
   });
 });
-
-async function addCard(page: Page, number: string) {
-  await page.getByRole('button', { name: 'Add a card' }).click();
-  // Stripe's card-only element: one iframe with all four fields.
-  const card = page.locator('iframe[title*="card payment input"]').first().contentFrame();
-  await card.getByPlaceholder('Card number').fill(number);
-  await card.getByPlaceholder('MM / YY').fill('12 / 34');
-  await card.getByPlaceholder('CVC').fill('123');
-  const zip = card.getByPlaceholder('ZIP');
-  if (await zip.isVisible().catch(() => false)) await zip.fill('94107');
-  await page.getByRole('button', { name: 'Save card' }).click();
-  await expect(page.getByRole('heading', { name: 'Place a bid' })).toBeVisible({
-    timeout: 30_000,
-  });
-}
 
 test('save a test card, then bid with a real hold', async ({ browser }) => {
   const auction = seedAuction(120);
