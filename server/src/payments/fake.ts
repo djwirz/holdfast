@@ -184,6 +184,14 @@ export class FakePayments implements Payments {
     return Promise.resolve({ ok: true });
   }
 
+  listHolds(): Promise<PaymentIntentView[]> {
+    return Promise.resolve(
+      [...this.intents.values()]
+        .filter((i) => i.status === 'requires_capture')
+        .map((i) => ({ ...i })),
+    );
+  }
+
   retrieve(paymentIntentId: string): Promise<PaymentIntentView | null> {
     const intent = this.intents.get(paymentIntentId);
     return Promise.resolve(intent ? { ...intent } : null);

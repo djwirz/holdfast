@@ -36,7 +36,8 @@ const LOST_RESPONSE_RATE = 0.06;
 // them placed a hold first. Every Nth, like the crashes, so every run has some.
 const SERVER_ERROR_EVERY = 15;
 // Only a few dozen bids per storm pass the pre-check and reach the crash point, so a random
-// rate can come up empty. Every Nth one "dies" instead, so every run recovers some crashes.
+// rate can come up empty. The first one and every Nth after "die" instead: some seeds get
+// fewer than N bids that far, and every run must still recover at least one crash.
 const CRASH_EVERY = 12;
 const CANCEL_FAULT_EVERY = 4; // every 4th cancel call fails transiently
 const RETRY_RATE = 0.1;
@@ -79,7 +80,7 @@ describe(`bid storm (STORM_SEED=${String(seed)})`, () => {
     const payments = new FakePayments({
       latency: () => Math.floor(random() * MAX_LATENCY_MS),
       decide: () => {
-        if (++authorizations % SERVER_ERROR_EVERY === 0) {
+        if (++authorizations % SERVER_ERROR_EVERY === 1) {
           serverErrors++;
           return { error: 'server_error', created: random() < 0.5 };
         }
@@ -98,7 +99,7 @@ describe(`bid storm (STORM_SEED=${String(seed)})`, () => {
       payments,
       faults: {
         afterAuthorize: (bid: Bid) => {
-          if (++reachedCommit % CRASH_EVERY === 0) {
+          if (++reachedCommit % CRASH_EVERY === 1) {
             crashed.add(bid.id);
             throw new SimulatedCrash();
           }

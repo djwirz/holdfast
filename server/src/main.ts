@@ -17,6 +17,7 @@ import { HttpFakePayments } from './payments/http-fake.ts';
 import type { Payments } from './payments/port.ts';
 import { StripePayments, stripeClient } from './payments/stripe.ts';
 import { reconcileOnce } from './reconciler.ts';
+import { startSampler } from './sampler.ts';
 
 const config = loadConfig();
 const { db, pool } = createDb(config.DATABASE_URL, { max: 20 });
@@ -86,6 +87,8 @@ const outbox = startOutboxWorker(
   { intervalMs: config.OUTBOX_INTERVAL_MS, onError },
 );
 const lifecycle = startLifecycle({ db }, { intervalMs: config.LIFECYCLE_INTERVAL_MS, onError });
+// The numbers the alerts watch (spec §8): outbox health and the orphaned-hold alarm.
+const sampler = startSampler({ db, payments }, { onError });
 const reconciler = setInterval(() => {
   reconcileOnce({ db, payments }).catch(onError);
 }, 5_000);
@@ -102,6 +105,7 @@ async function shutdown(signal: string) {
   stopping = true;
   log.info({ signal }, 'shutting down');
   clearInterval(reconciler);
+  sampler.stop();
   await app.close();
   await Promise.all([outbox.stop(), lifecycle.stop()]);
   subscriber.disconnect();

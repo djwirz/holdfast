@@ -5,6 +5,7 @@
 import type { AuctionEvent } from '@holdfast/shared';
 import type { Redis } from 'ioredis';
 import type { Db } from '../db/client.ts';
+import { contextFrom, currentTraceparent, inSpan } from '../observability.ts';
 import type { LiveEvent, Publisher } from '../outbox/publisher.ts';
 import { type Aliaser, eventsSince } from './read.ts';
 
@@ -20,7 +21,11 @@ export class RedisPublisher implements Publisher {
 
   async publish(event: LiveEvent): Promise<void> {
     // A failure here leaves the outbox row to retry with backoff.
-    await this.redis.publish(`${CHANNEL_PREFIX}${event.auctionId}`, String(event['version']));
+    // The doorbell carries the trace on (spec §8), so the fan-out on every instance joins it.
+    await this.redis.publish(
+      `${CHANNEL_PREFIX}${event.auctionId}`,
+      JSON.stringify({ version: event['version'], traceparent: currentTraceparent() }),
+    );
   }
 }
 
@@ -55,8 +60,27 @@ export class LiveHub {
     this.options = { pollMs: 2_000, onError: () => undefined, ...options };
     const { subscriber } = options;
     if (subscriber) {
-      subscriber.on('pmessage', (_pattern: string, channel: string) => {
-        this.ring(channel.slice(CHANNEL_PREFIX.length));
+      subscriber.on('pmessage', (_pattern: string, channel: string, message: string) => {
+        const auctionId = channel.slice(CHANNEL_PREFIX.length);
+        let traceparent: unknown = null;
+        try {
+          traceparent = (JSON.parse(message) as { traceparent?: unknown }).traceparent;
+        } catch {
+          // An older or foreign message: still a doorbell, just untraced.
+        }
+        if (traceparent) {
+          void inSpan(
+            'live.fanout',
+            { 'auction.id': auctionId },
+            async () => {
+              this.ring(auctionId);
+              await this.feeds.get(auctionId)?.running;
+            },
+            contextFrom(traceparent),
+          );
+        } else {
+          this.ring(auctionId);
+        }
       });
       // After a reconnect, anything published while Redis was away was missed: re-read all.
       subscriber.on('ready', () => {

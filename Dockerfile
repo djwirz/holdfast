@@ -37,4 +37,6 @@ COPY --from=build --chown=node:node /app/web/dist web/dist
 ENV WEB_DIST=/app/web/dist
 USER node
 EXPOSE 3000
-CMD ["node", "server/src/main.ts"]
+# Telemetry loads first so its module hooks can instrument everything after it (spec §8);
+# it does nothing unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+CMD ["node", "--import", "./server/src/telemetry.ts", "server/src/main.ts"]

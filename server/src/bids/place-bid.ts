@@ -4,6 +4,13 @@ import { type AuctionState, type Cents, checkBid, isCents } from '@holdfast/shar
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.ts';
 import { auctions, bids, outbox } from '../db/schema.ts';
+import {
+  bidOutcomes,
+  currentTraceparent,
+  holdDuration,
+  inSpan,
+  lockWait,
+} from '../observability.ts';
 import { type AuthorizeResult, type Payments, TransientPaymentsError } from '../payments/port.ts';
 
 export type Bid = typeof bids.$inferSelect;
@@ -124,31 +131,39 @@ export async function placeBid(
   const amount = input.amount;
 
   // 1. Pre-check without a lock, against database time, then claim the idempotency key.
-  const pre = await db.execute<AuctionRow>(
-    sql`select ${AUCTION_COLUMNS} from auctions a where a.id = ${input.auctionId}`,
-  );
-  const auctionRow = pre.rows[0];
-  if (!auctionRow) throw new AuctionNotFoundError(input.auctionId);
-  auctionRow.currentHigh = await currentHighAmount(db, auctionRow.currentHighBidId);
-  const preCheck = checkBid(toState(auctionRow), amount, await dbNow(db));
+  const claim = await inSpan('bid.claim', { 'auction.id': input.auctionId }, async (span) => {
+    const pre = await db.execute<AuctionRow>(
+      sql`select ${AUCTION_COLUMNS} from auctions a where a.id = ${input.auctionId}`,
+    );
+    const auctionRow = pre.rows[0];
+    if (!auctionRow) throw new AuctionNotFoundError(input.auctionId);
+    auctionRow.currentHigh = await currentHighAmount(db, auctionRow.currentHighBidId);
+    const preCheck = checkBid(toState(auctionRow), amount, await dbNow(db));
 
-  const [claimed] = await db
-    .insert(bids)
-    .values({
-      auctionId: input.auctionId,
-      userId: input.userId,
-      idempotencyKey: input.idempotencyKey,
-      amount,
-      ...(preCheck.ok
-        ? {}
-        : {
-            status: 'rejected' as const,
-            reason: preCheck.reason,
-            resolvedAt: sql`clock_timestamp()`,
-          }),
-    })
-    .onConflictDoNothing({ target: [bids.userId, bids.idempotencyKey] })
-    .returning();
+    const [claimed] = await db
+      .insert(bids)
+      .values({
+        auctionId: input.auctionId,
+        userId: input.userId,
+        idempotencyKey: input.idempotencyKey,
+        amount,
+        ...(preCheck.ok
+          ? {}
+          : {
+              status: 'rejected' as const,
+              reason: preCheck.reason,
+              resolvedAt: sql`clock_timestamp()`,
+            }),
+      })
+      .onConflictDoNothing({ target: [bids.userId, bids.idempotencyKey] })
+      .returning();
+    if (claimed) span.setAttribute('bid.id', claimed.id);
+    if (claimed?.status === 'rejected') {
+      bidOutcomes.add(1, { outcome: 'rejected', reason: claimed.reason ?? 'unknown' });
+    }
+    return claimed;
+  });
+  const claimed = claim;
 
   if (!claimed) {
     // A retry (or a concurrent duplicate). Only the request that inserted the row goes on,
@@ -198,12 +213,26 @@ export async function placeBid(
 export async function resumeBid(deps: PlaceBidDeps, bid: Bid): Promise<Bid> {
   const { db, payments } = deps;
   // 2. Authorize outside any transaction or lock: a slow card never blocks other bidders.
-  const auth = await payments.authorize({
-    idempotencyKey: bid.id,
-    userId: bid.userId,
-    amount: bid.amount as Cents,
-    metadata: { bidId: bid.id, auctionId: bid.auctionId },
-  });
+  const auth = await inSpan(
+    'payments.authorize',
+    { 'bid.id': bid.id, 'auction.id': bid.auctionId, 'bid.amount': bid.amount },
+    async (span) => {
+      const started = performance.now();
+      try {
+        const result = await payments.authorize({
+          idempotencyKey: bid.id,
+          userId: bid.userId,
+          amount: bid.amount as Cents,
+          metadata: { bidId: bid.id, auctionId: bid.auctionId },
+        });
+        span.setAttribute('payments.ok', result.ok);
+        if (result.ok) span.setAttribute('payment_intent.id', result.paymentIntentId);
+        return result;
+      } finally {
+        holdDuration.record(performance.now() - started);
+      }
+    },
+  );
 
   if (!auth.ok) {
     return resolvePending(db, bid, {
@@ -221,7 +250,15 @@ export async function resumeBid(deps: PlaceBidDeps, bid: Bid): Promise<Bid> {
   deps.faults?.afterAuthorize?.(withIntent);
 
   // 3. Decide under the auction row lock.
-  return db.transaction((tx) => decide(tx, withIntent, auth));
+  return inSpan(
+    'bid.decide',
+    { 'bid.id': bid.id, 'auction.id': bid.auctionId, 'payment_intent.id': auth.paymentIntentId },
+    async (span) => {
+      const decided = await db.transaction((tx) => decide(tx, withIntent, auth));
+      span.setAttribute('bid.outcome', decided.status);
+      return decided;
+    },
+  );
 }
 
 async function decide(
@@ -229,9 +266,11 @@ async function decide(
   bid: Bid,
   auth: Extract<AuthorizeResult, { ok: true }>,
 ): Promise<Bid> {
+  const waitStarted = performance.now();
   const locked = await tx.execute<AuctionRow>(
     sql`select ${AUCTION_COLUMNS} from auctions a where a.id = ${bid.auctionId} for update`,
   );
+  lockWait.record(performance.now() - waitStarted);
   const auction = locked.rows[0];
   if (!auction) throw new AuctionNotFoundError(bid.auctionId);
   auction.currentHigh = await currentHighAmount(tx, auction.currentHighBidId);
@@ -256,6 +295,7 @@ async function decide(
     // reconciler both decide it, the second sees no pending row and must add nothing.
     if (!lost) return current(tx, bid.id);
     await tx.insert(outbox).values(cancelHold(bid, auth.paymentIntentId));
+    bidOutcomes.add(1, { outcome: 'lost_race', reason: lost.reason ?? 'unknown' });
     return lost;
   }
 
@@ -267,6 +307,7 @@ async function decide(
     .returning();
   // Zero rows: something else (the reconciler, from slice 3) already resolved this bid.
   if (!accepted) return current(tx, bid.id);
+  bidOutcomes.add(1, { outcome: 'accepted', reason: 'none' });
 
   const previousHighId = auction.currentHighBidId;
   if (previousHighId !== null) {
@@ -291,7 +332,8 @@ async function decide(
       version,
       bidId: bid.id,
       amount: bid.amount,
-      traceparent: null,
+      // Carries this bid's trace into the publish and on through Redis (spec §8).
+      traceparent: currentTraceparent(),
     },
   });
   return accepted;
@@ -300,7 +342,12 @@ async function decide(
 function cancelHold(bid: Bid, paymentIntentId: string): typeof outbox.$inferInsert {
   return {
     kind: 'cancel_hold',
-    payload: { paymentIntentId, bidId: bid.id, auctionId: bid.auctionId, traceparent: null },
+    payload: {
+      paymentIntentId,
+      bidId: bid.id,
+      auctionId: bid.auctionId,
+      traceparent: currentTraceparent(),
+    },
   };
 }
 
@@ -315,6 +362,8 @@ async function resolvePending(
     .set(set)
     .where(and(eq(bids.id, bid.id), eq(bids.status, 'pending')))
     .returning();
+  // Counted only by the call that resolved it, so two racers never count one bid twice.
+  if (row) bidOutcomes.add(1, { outcome: row.status, reason: row.reason ?? 'none' });
   return row ?? current(db, bid.id);
 }
 

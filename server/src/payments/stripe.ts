@@ -223,6 +223,22 @@ export class StripePayments implements Payments {
     return { ok: false, reason: failure.reason, retryable: failure.kind !== 'declined' };
   }
 
+  async listHolds(): Promise<PaymentIntentView[]> {
+    // A hold lasts 7 days (spec §2), so older intents can't be holding money.
+    const since = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+    const holds: PaymentIntentView[] = [];
+    for await (const intent of this.client.paymentIntents.list({
+      created: { gte: since },
+      limit: 100,
+    })) {
+      // Only this app's bids: other intents on the account aren't ours to judge.
+      if (intent.status !== 'requires_capture' || !intent.metadata['bidId']) continue;
+      const view = toView(intent);
+      if (view) holds.push(view);
+    }
+    return holds;
+  }
+
   async retrieve(paymentIntentId: string): Promise<PaymentIntentView | null> {
     const intent = await this.client.paymentIntents.retrieve(paymentIntentId);
     return toView(intent);
