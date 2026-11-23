@@ -5,6 +5,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from './db/client.ts';
 import { auctions, bids, outbox } from './db/schema.ts';
 import { currentTraceparent, inSpan } from './observability.ts';
+import { seed } from './seed.ts';
 
 export interface LifecycleResult {
   opened: number;
@@ -85,17 +86,39 @@ export async function tickLifecycleOnce(deps: { db: Db }): Promise<LifecycleResu
   return { opened: opened.length, closed };
 }
 
-/** Runs the lifecycle tick on an interval until stopped. */
+/**
+ * Runs the lifecycle tick on an interval until stopped. With `demoRounds`, it also opens the
+ * next round of each demo auction once the last one has ended (spec §13 Q4), checking at
+ * most every `demoRoundsEveryMs`, so the live demo always has something to bid on.
+ */
 export function startLifecycle(
   deps: { db: Db },
-  options: { intervalMs?: number; onError?: (e: unknown) => void } = {},
+  options: {
+    intervalMs?: number;
+    onError?: (e: unknown) => void;
+    demoRounds?: boolean;
+    demoRoundsEveryMs?: number;
+  } = {},
 ): { stop: () => Promise<void> } {
-  const { intervalMs = 500, onError = () => undefined } = options;
+  const {
+    intervalMs = 500,
+    onError = () => undefined,
+    demoRounds = false,
+    demoRoundsEveryMs = 30_000,
+  } = options;
   let stopped = false;
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> = Promise.resolve();
+  let lastRounds = Number.NEGATIVE_INFINITY;
+  const tick = async () => {
+    await tickLifecycleOnce(deps);
+    if (demoRounds && Date.now() - lastRounds >= demoRoundsEveryMs) {
+      lastRounds = Date.now();
+      await seed(deps.db);
+    }
+  };
   const loop = () => {
-    running = tickLifecycleOnce(deps).then(
+    running = tick().then(
       () => undefined,
       (e: unknown) => {
         onError(e);
