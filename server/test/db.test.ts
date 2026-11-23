@@ -4,6 +4,7 @@ import { InvalidAuctionError, createAuction } from '../src/auctions.ts';
 import type { Db } from '../src/db/client.ts';
 import { runMigrations } from '../src/db/migrate.ts';
 import { auctions, bids, users } from '../src/db/schema.ts';
+import { startLifecycle } from '../src/lifecycle.ts';
 import { DEMO_AUCTIONS, seed } from '../src/seed.ts';
 import { type TestDb, freshDb } from './support/db.ts';
 
@@ -163,5 +164,38 @@ describe('seed', () => {
     const rows = await db.select().from(auctions);
     expect(rows).toHaveLength(DEMO_AUCTIONS.length);
     expect(rows.every((r) => r.status === 'open')).toBe(true);
+  });
+
+  it('opens the next round of a demo auction once the last one has ended', async () => {
+    const now = new Date();
+    await seed(db, now);
+    const shortest = Math.min(...DEMO_AUCTIONS.map((d) => d.minutes));
+    const later = new Date(now.getTime() + shortest * 60_000);
+    // Only the auctions that ended by then get a new round.
+    const ended = DEMO_AUCTIONS.filter((d) => d.minutes <= shortest).length;
+    expect(await seed(db, later)).toEqual({
+      created: ended,
+      skipped: DEMO_AUCTIONS.length - ended,
+    });
+    expect(await db.select().from(auctions)).toHaveLength(DEMO_AUCTIONS.length + ended);
+  });
+
+  it('opens one round, not several, when replicas seed at the same moment', async () => {
+    const now = new Date();
+    const results = await Promise.all(Array.from({ length: 5 }, () => seed(db, now)));
+    expect(results.reduce((n, r) => n + r.created, 0)).toBe(DEMO_AUCTIONS.length);
+    expect(await db.select().from(auctions)).toHaveLength(DEMO_AUCTIONS.length);
+  });
+
+  it('runs rounds from the lifecycle loop only when demoRounds is on', async () => {
+    const off = startLifecycle({ db }, { intervalMs: 50 });
+    await new Promise((r) => setTimeout(r, 300));
+    await off.stop();
+    expect(await db.select().from(auctions)).toHaveLength(0);
+
+    const on = startLifecycle({ db }, { intervalMs: 50, demoRounds: true });
+    await new Promise((r) => setTimeout(r, 300));
+    await on.stop();
+    expect(await db.select().from(auctions)).toHaveLength(DEMO_AUCTIONS.length);
   });
 });

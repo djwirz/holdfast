@@ -86,7 +86,10 @@ const outbox = startOutboxWorker(
   { db, payments, publisher: new RedisPublisher(redis) },
   { intervalMs: config.OUTBOX_INTERVAL_MS, onError },
 );
-const lifecycle = startLifecycle({ db }, { intervalMs: config.LIFECYCLE_INTERVAL_MS, onError });
+const lifecycle = startLifecycle(
+  { db },
+  { intervalMs: config.LIFECYCLE_INTERVAL_MS, onError, demoRounds: config.DEMO_ROUNDS },
+);
 // The numbers the alerts watch (spec §8): outbox health and the orphaned-hold alarm.
 const sampler = startSampler({ db, payments }, { onError });
 const reconciler = setInterval(() => {

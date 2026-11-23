@@ -1,6 +1,6 @@
 import { type SubmitEvent, useEffect, useRef, useState } from 'react';
 import { ApiError, type Me, type OwnBid, api } from './api.ts';
-import { useAuctionStream, useNow } from './hooks.ts';
+import { navigate, useAuctionStream, useNow } from './hooks.ts';
 import { type AuctionView, describeOutcome, money } from './live.ts';
 
 export function AuctionPage(props: { auctionId: string; me: Me | null; canBid: boolean }) {
@@ -31,11 +31,13 @@ export function AuctionPage(props: { auctionId: string; me: Me | null; canBid: b
     <main className="auction">
       <h1>{auction.title}</h1>
       <p className={`connection connection-${connection}`}>
-        {connection === 'live'
-          ? 'Live'
-          : connection === 'reconnecting'
-            ? 'Reconnecting…'
-            : 'Connecting…'}
+        {view.result
+          ? 'Ended'
+          : connection === 'live'
+            ? 'Live'
+            : connection === 'reconnecting'
+              ? 'Reconnecting…'
+              : 'Connecting…'}
       </p>
 
       <section className="price" aria-labelledby="price-label">
@@ -109,9 +111,23 @@ function Result({ view }: { view: AuctionView }) {
         ? `You won, at ${money(result.amount)}.`
         : `Sold to ${result.winner} for ${money(result.amount)}.`;
   return (
-    <p className="result" data-testid="result">
-      {text}
-    </p>
+    <>
+      <p className="result" data-testid="result">
+        {text}
+      </p>
+      {/* Demo auctions run in rounds: the next one opens shortly after this one ends. */}
+      <p>
+        <a
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate('/');
+          }}
+        >
+          See the live auctions
+        </a>
+      </p>
+    </>
   );
 }
 

@@ -22,6 +22,7 @@
     "dev:server": "pnpm --filter @holdfast/server dev",
     "test:e2e": "playwright test --project e2e",
     "test:e2e:stripe": "E2E_STRIPE=1 playwright test --project e2e-stripe",
+    "demo:gif": "node scripts/demo-gif.ts",
     "test:smoke": "playwright test --project smoke",
     "railway:env": "node scripts/railway-env.ts",
     "stripe:webhook": "node server/scripts/stripe-webhook.ts",

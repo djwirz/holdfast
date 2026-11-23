@@ -45,6 +45,8 @@ const ConfigSchema = z
     AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(20),
     OUTBOX_INTERVAL_MS: z.coerce.number().int().min(10).default(100),
     LIFECYCLE_INTERVAL_MS: z.coerce.number().int().min(50).default(500),
+    // Reopen each demo auction in rounds so the live demo always has one open (spec §13 Q4).
+    DEMO_ROUNDS: flag,
   })
   .refine((c) => !c.DEV_SIGN_IN || c.NODE_ENV !== 'production', {
     message: 'DEV_SIGN_IN is only allowed in development and test',

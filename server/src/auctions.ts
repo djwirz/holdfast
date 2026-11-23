@@ -17,7 +17,8 @@ export class InvalidAuctionError extends Error {
  * page will if it's built. The database CHECKs repeat the important rules as a backstop.
  */
 export async function createAuction(
-  db: Db,
+  // A database or a transaction: it only inserts.
+  db: Pick<Db, 'insert'>,
   input: NewAuctionInput & { status?: 'scheduled' | 'open' },
 ): Promise<typeof auctions.$inferSelect> {
   const problems = checkNewAuction(input);

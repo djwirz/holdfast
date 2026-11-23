@@ -81,6 +81,7 @@ The table below is what it sets, for setting them by hand instead.
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` | step 4 |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | the OAuth app | step 3 |
 | `OUTBOX_INTERVAL_MS`, `LIFECYCLE_INTERVAL_MS` | `250` and `1000`: polling with two replicas | type them |
+| `DEMO_ROUNDS` | `1`: each demo auction reopens in a new round once the last has ended, so the demo is never empty | `pnpm railway:env` |
 
 `PORT` is set by Railway. `WEB_DIST` is set in the image. `DEV_SIGN_IN` must not be set: the server refuses to start with it in production.
 

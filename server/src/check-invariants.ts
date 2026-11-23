@@ -1,21 +1,28 @@
 // The invariant checker as a command (spec §7, §11.2): after a load or end-to-end run against
 // the running stack, wait until the auction has closed and everything has settled, then
-// check all five invariants against the database and the shared Stripe fake's own record.
+// check all five invariants against the database and the shared Stripe fake's own record,
+// or with --stripe, Stripe test mode's own record of the bidders' payment intents.
 // Exits 1 on any violation, and on any failed outbox row (a side effect that gave up).
 //
-//   node src/check-invariants.ts --auction <id> [--wait 120] [--fake http://127.0.0.1:4010] [--out file.json]
+//   node src/check-invariants.ts --auction <id> [--wait 120] [--fake http://127.0.0.1:4010 | --stripe] [--out file.json]
 import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { sql } from 'drizzle-orm';
 import { createDb, databaseUrl } from './db/client.ts';
 import { checkInvariants } from './invariants.ts';
+import { users } from './db/schema.ts';
+import type { PaymentsAudit } from './invariants.ts';
+import { customerFromUsers } from './payments/customers.ts';
 import { HttpFakePayments } from './payments/http-fake.ts';
+import type { Payments } from './payments/port.ts';
+import { StripePayments, stripeAudit, stripeClient } from './payments/stripe.ts';
 
 const { values: args } = parseArgs({
   options: {
     auction: { type: 'string' },
     wait: { type: 'string', default: '120' },
     fake: { type: 'string' },
+    stripe: { type: 'boolean', default: false },
     out: { type: 'string' },
     'min-accepted': { type: 'string', default: '1' },
   },
@@ -25,9 +32,31 @@ if (!args.auction) {
   process.exit(2);
 }
 const auctionId: string = args.auction;
-const fakeUrl = args.fake ?? process.env['FAKE_PAYMENTS_URL'] ?? 'http://127.0.0.1:4010';
-const payments = new HttpFakePayments(fakeUrl);
 const { db, pool } = createDb(databaseUrl());
+let payments: Payments;
+let readAudit: () => Promise<PaymentsAudit>;
+if (args.stripe) {
+  // stripeClient refuses anything but a test-mode key, and never prints it.
+  const client = stripeClient(process.env['STRIPE_SECRET_KEY'] ?? '');
+  payments = new StripePayments({ client, customerFor: customerFromUsers(db) });
+  // Stripe lists intents by customer: this auction's bidders.
+  readAudit = async () => {
+    const rows = await db.execute<{ customer: string }>(sql`
+      select distinct u.stripe_customer_id as customer
+        from bids b join ${users} u on u.id = b.user_id
+       where b.auction_id = ${auctionId} and u.stripe_customer_id is not null`);
+    return stripeAudit(
+      client,
+      rows.rows.map((r) => r.customer),
+    );
+  };
+} else {
+  const fake = new HttpFakePayments(
+    args.fake ?? process.env['FAKE_PAYMENTS_URL'] ?? 'http://127.0.0.1:4010',
+  );
+  payments = fake;
+  readAudit = () => fake.audit();
+}
 
 type State = {
   status: string;
@@ -74,7 +103,7 @@ try {
   }
   const quiet = ['closed', 'settled'].includes(s.status) && s.pending === 0 && s.outboxOpen === 0;
 
-  const audit = await payments.audit();
+  const audit = await readAudit();
   const violations = quiet
     ? await checkInvariants(db, payments, { auctionId, audit, outboxIdle: true })
     : [];

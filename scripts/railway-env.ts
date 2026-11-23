@@ -70,6 +70,8 @@ const sets = new Map<string, string>([
   ['APP_ORIGIN', `https://${domain}`],
   ['OUTBOX_INTERVAL_MS', '250'],
   ['LIFECYCLE_INTERVAL_MS', '1000'],
+  // The live demo always has an open round of each demo auction (spec §13 Q4).
+  ['DEMO_ROUNDS', '1'],
   // References: Railway resolves these to the private-network URLs of the other services.
   ['DATABASE_URL', '${{Postgres.DATABASE_URL}}'],
   ['REDIS_URL', '${{Redis.REDIS_URL}}'],

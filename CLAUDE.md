@@ -3,7 +3,7 @@
 Real-time auctions where a bid counts only once a Stripe test-mode authorization hold covers it. Bids are ordered in a Postgres transaction, every bidder sees updates live, and a load test proves the ordering holds under near-simultaneous bids. Use they/them for Dan.
 
 ## Status
-Slice 6b (observability: traces, metrics and alerts on Grafana Cloud, the runbook) is in progress; slice 7 (demo polish) is next. The spec and ADRs 0001–0006 (PR #1) and slices 1 through 6a (PRs #2, #4–#10) are merged. Open questions are in spec §13; settle each one by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
+All slices of v1 are built: the spec and ADRs 0001–0007, slices 1 through 6b (PRs #1–#11) and slice 7 (demo polish: rolling demo rounds, the README GIF, the case study). What's next is §11's stretch: soft close, proxy bidding, the Go bid-storm CLI. Open questions in spec §13 are all settled. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## Commands
 - Node 26 (`.nvmrc`), pnpm via corepack. `docker compose up -d --wait` for Postgres and Redis.
@@ -12,6 +12,7 @@ Slice 6b (observability: traces, metrics and alerts on Grafana Cloud, the runboo
 - Telemetry: `node --import ./src/telemetry.ts` loads OpenTelemetry first (a no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`). `pnpm grafana:alerts` applies `ops/grafana/alerts.json` (`--status` reads states). `pnpm drill <orphan|outbox|capture>` fires one alert on purpose locally. `pnpm ops:requeue <id>…` puts failed outbox rows back (see `docs/runbook.md`).
 - `pnpm load:stack` then `pnpm load`: a k6 storm (in Docker) through two instances and the shared Stripe fake, then the invariant checker; `VUS`, `BIDS_PER_VU`, `ENDS_IN` size it. `node scripts/load-chart.ts <run>` redraws `docs/load/storm.svg`. `node scripts/trace-chart.ts <trace id>` redraws `docs/trace.svg` from a trace in Grafana.
 - `pnpm test:smoke` with `SMOKE_URL=https://…`: checks a running deploy (health, page, live stream, axe); CI runs it after each deploy. `docker build -t holdfast .` builds the deployed image.
+- `pnpm demo:gif`: records `docs/demo.gif` (two bidders, two instances, real Stripe test mode; checks Stripe's record of the holds), ffmpeg in Docker. Needs the test keys in `.env.local`.
 - `pnpm test:e2e`: Playwright with the fake (CI runs it; needs `docker compose up` locally and `pnpm exec playwright install chromium` once). `pnpm test:e2e:stripe`: the real-card flow, by hand, with the keys in `.env.local`.
 - `pnpm test:live`: the real Stripe test-mode suite, by hand only; needs a `sk_test_` `STRIPE_SECRET_KEY` in `.env.local` and skips without one.
 - The storm test (`server/test/concurrency.test.ts`) prints its seed; replay a failure with `STORM_SEED=<n> pnpm exec vitest run --project integration server/test/concurrency.test.ts`.
