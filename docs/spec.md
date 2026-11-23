@@ -222,7 +222,7 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 **Deployed** (slice 5, ADR 0007): Railway runs the `Dockerfile` image as two replicas with Postgres and Redis on its private network. The server serves the built page itself, so page and API share one origin. `.railway/railway.ts` (Railway's infrastructure-as-code file) holds the deploy settings: two replicas, the health check, and migrate and seed before each deploy. Railway deploys `main` once CI passes, and `.github/workflows/smoke.yml` runs `pnpm test:smoke` against every successful deploy. The account steps, variables and rollback are in `docs/deploy.md`.
 
 ## 11. Acceptance criteria (v1 "done", depth 3)
-1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README.
+1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README, recorded by `pnpm demo:gif` against two instances and real Stripe test mode; the run fails unless Stripe's record shows the losing holds released and the winner captured (slice 7).
 2. **Correct under load:** the k6 storm with the invariant checker shows zero violations, and the README has the chart and an honest throughput figure in words.
 3. **Tests and CI:** every automated category in §10 runs on each PR. The real-test-mode Stripe suite and the bigger k6 runs are by hand, as §10 says. Deploys come only from `main`.
 4. **Traced:** a picture of one bid's trace end to end, across two instances, is in the README. It's drawn from the trace data (`scripts/trace-chart.ts`) rather than screenshotted, so anyone can redraw it from a trace id (Dan, slice 6b).
@@ -250,7 +250,7 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 6. **Load and trace,** split in two PRs (Dan, after slice 5):
    - **6a, load:** k6 scenarios and the checker in CI, the shared Stripe fake, the README chart and throughput figure, and releasing the holds the real-Stripe suites leave open.
    - **6b, observability** (Grafana Cloud free): OpenTelemetry traces across instances, the trace picture, metrics and alerts (each fired once), and the runbook. Alerts as code and drills on a local stack (Dan).
-7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes.
+7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes. As built: demo auctions in rounds (Q4), the scripted GIF, and [the case study](case-study.md). Soft close stays a stretch goal (Dan).
 
 ## 13. Open questions (settle before slice 1 unless noted)
 1. **Hosting.** Recommendation: one container app on a host that keeps long-lived connections and can run two instances, such as Fly.io. Pair it with Neon (Postgres) and Upstash (Redis). Vercel doesn't fit, because SSE and the background workers need a long-running process. Check current prices and free limits at slice 5 and write the ADR then.
@@ -260,5 +260,7 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 3. **Demo access.** Open GitHub sign-in for anyone (it's test mode, so the only cost is abuse) or a passcode gate like Token Keeper's? Recommendation: open, with rate limits, and the ability to switch to a passcode if it's abused. Decide by slice 4.
    **Settled in slice 4a: open, with rate limits** (Dan). Anyone with a GitHub account can sign in and bid; bids are limited per user and sign-in per IP. A passcode gate stays the fallback if it's abused.
 4. **Pace of auctions in the demo.** One always-running auction that restarts every few minutes, or a seed script for each demo? Decide by slice 7.
+   **Settled in slice 7: rounds** (Dan). With `DEMO_ROUNDS` on (production), the lifecycle loop opens the next round of each demo auction once the last has ended, so the live demo is never empty. Seeding takes an advisory lock, so two replicas open one round.
 5. **Skills check.** Dropped (Dan, after slice 1). The project is justified by its own problem, not by matching a skills score. The guard is the problem-first rule in CLAUDE.md, applied in each slice's plan.
 6. **Case-study angle.** How much comparison to past professional work is safe to make? Public patterns only, no employer names. Decide in slice 7.
+   **Settled in slice 7: none** (Dan). [The case study](case-study.md) stands on this project alone.

@@ -2,9 +2,13 @@
 
 Real-time auctions where a bid counts only once a Stripe authorization hold covers it. Bids are ordered in a Postgres transaction and every bidder sees updates live. A load test of near-simultaneous bids proves the ordering holds, and one bid can be traced end to end.
 
-**Live demo:** https://holdfast-production-ba968615.up.railway.app (Stripe test mode: use card 4242 4242 4242 4242; no real money moves).
+![Two bidders in two browsers bid on the same auction; each bid appears live on the other page, until the auction ends and one wins](docs/demo.gif)
 
-**Status:** slice 6b of 7 (observable: one bid traced end to end across both instances; alerts on orphaned holds, outbox failures and capture failures, each fired once on purpose; see [docs/runbook.md](docs/runbook.md)). Deployed on Railway with two replicas ([docs/deploy.md](docs/deploy.md)); two people in two browsers can bid against each other and see every change live; each bid places a real test-mode card hold. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). Stripe test mode only; no real money moves.
+Two bidders, two browsers, two server instances, real Stripe test-mode card holds. Each bid shows up live on the other page, and at the close Stripe's own record is checked: every losing hold released, the winner's captured. Recorded locally by `pnpm demo:gif`, which fails if that check fails.
+
+**Live demo:** https://holdfast-production-ba968615.up.railway.app (Stripe test mode: use card 4242 4242 4242 4242; no real money moves). The demo auctions run in rounds, so one is always open.
+
+**Status:** v1 is complete: every acceptance criterion in [spec §11](docs/spec.md#11-acceptance-criteria-v1-done-depth-3) is met. Deployed on Railway with two replicas ([docs/deploy.md](docs/deploy.md)), traced and alerted ([docs/runbook.md](docs/runbook.md)). Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). How it was built with Claude Code, and where the AI was wrong: [docs/case-study.md](docs/case-study.md).
 
 ## Correct under load
 
@@ -62,6 +66,7 @@ End to end, as CI runs it (the fake), and the real-card flow by hand:
 pnpm exec playwright install chromium   # once
 pnpm test:e2e
 pnpm test:e2e:stripe                    # needs sk_test_ and pk_test_ keys in .env.local
+pnpm demo:gif                           # re-records docs/demo.gif the same way (Docker for ffmpeg)
 ```
 
 After changing `server/src/db/schema.ts`, run `pnpm db:generate` and commit the new migration in `server/drizzle/`.
