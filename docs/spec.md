@@ -166,7 +166,7 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 
 ## 8. Observability
 - **Logs:** structured logs (pino) with request id, bid id, auction id and PaymentIntent id. Card data never reaches the server; Elements handles it.
-- **Traces:** OpenTelemetry auto-instrumentation for HTTP, `pg`, `ioredis` and the Stripe client, plus manual spans for the bid steps. The trace context is carried through outbox rows and Redis messages, so one bid's trace runs from the HTTP request to the SSE write on every instance. The trace screenshot is an acceptance criterion.
+- **Traces:** OpenTelemetry auto-instrumentation for HTTP, `pg`, `ioredis` and the Stripe client, plus manual spans for the bid steps. The trace context is carried through outbox rows and Redis messages, so one bid's trace runs from the HTTP request to the SSE write on every instance. A picture of one bid's trace is an acceptance criterion.
 - **Metrics:**
   - Bids by outcome.
   - Hold latency.
@@ -177,12 +177,13 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 - **Alerts:** orphaned holds above zero for more than a few minutes; outbox failures; a capture failure.
 - **As built (slice 6b):**
   - OpenTelemetry to Grafana Cloud's free tier over OTLP. `server/src/telemetry.ts` loads first with `node --import` and does nothing unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so tests and local runs need no collector.
-  - Postgres and Redis calls are traced only inside a traced operation. The background loops poll several times a second on every replica, and tracing each poll would be gigabytes a day of nothing.
+  - Postgres, Redis and outgoing HTTP calls are traced only inside a traced operation. The background loops poll several times a second on every replica, and the sampler lists Stripe's holds every 30 seconds; tracing each of those would be gigabytes a day of nothing.
+  - `http` and `https` are instrumented through `require` only, since everything here that uses them (Fastify, the Stripe SDK) is CommonJS. Hooking them through the ESM loader too wrapped `https` twice, and every Stripe call showed as two spans.
   - A bid's trace: `bid.claim` → `payments.authorize` → `bid.decide` (with the lock wait) → `outbox.<kind>` on whichever instance claims the row (its `traceparent` travels in the row) → the Redis doorbell (now `{version, traceparent}`) → `live.fanout` and `sse.write` on every instance.
   - Metrics: `holdfast_bids_total{outcome,reason}`, hold and lock-wait histograms, and a sampler on every replica every 30 seconds. It reports outbox lag, failed outbox rows by kind, stale pending bids, unsettled auctions, and `holdfast_holds_orphaned`.
   - **The orphaned-hold count reads the payment provider** (`Payments.listHolds()`), not our own records. A live hold counts unless it's the current high of an open auction, a closed auction's winner awaiting capture, a pending bid, or one whose cancellation was queued in the last two minutes. Holds for auctions this database doesn't know are another environment's and are ignored.
   - Every replica samples, and the alerts take the max. A replica that stopped sampling would keep exporting its last value and could hold an alert open.
-  - The alerts live in `ops/grafana/alerts.json` and are applied by `pnpm grafana:alerts`. `docs/runbook.md` covers each. `pnpm drill <orphan|outbox|capture>` fires one on purpose against a local stack labelled `job="holdfast-drill"`, never the live demo.
+  - The alerts live in `ops/grafana/alerts.json` and are applied by `pnpm grafana:alerts`. `docs/runbook.md` covers each. `pnpm drill <orphan|outbox|capture>` fires one on purpose against a local stack labelled `job="holdfast-drill"`, never the live demo. Each drill gets a fresh database and waits for its alert to read normal before it breaks anything, so a firing can only be its own.
 
 ## 9. Security
 - Secrets (Stripe secret and webhook keys, GitHub OAuth secret, session secret) live in the host's secret store and never reach the client or logs.
@@ -224,7 +225,7 @@ Ordering note: commit order, not click order, decides ties. A bidder who clicked
 1. **Live demo:** deployed in `demo`. Two people in two browsers can bid against each other and see updates live. Holds appear and are released in the Stripe test dashboard, and the winner is captured at close. A GIF of this is in the README.
 2. **Correct under load:** the k6 storm with the invariant checker shows zero violations, and the README has the chart and an honest throughput figure in words.
 3. **Tests and CI:** every automated category in §10 runs on each PR. The real-test-mode Stripe suite and the bigger k6 runs are by hand, as §10 says. Deploys come only from `main`.
-4. **Traced:** a trace screenshot of one bid end to end, across two instances, is in the README.
+4. **Traced:** a picture of one bid's trace end to end, across two instances, is in the README. It's drawn from the trace data (`scripts/trace-chart.ts`) rather than screenshotted, so anyone can redraw it from a trace id (Dan, slice 6b).
 5. **Ops:** the alerts in §8 exist and each has been fired once on purpose. `docs/runbook.md` covers each one, and the budget alarm existed before the first deploy.
 6. **Record:** ADRs for every expensive decision, and each PR says how AI was used and what it got wrong.
 
@@ -248,7 +249,7 @@ Stretch: soft close, proxy bidding (a superseding ADR), and the Go bid-storm CLI
 5. **First deploy:** budget alarm first, then the host, managed Postgres and Redis, secrets, deploy on merge, and a post-deploy smoke test. Fix what real networking and TLS turn up.
 6. **Load and trace,** split in two PRs (Dan, after slice 5):
    - **6a, load:** k6 scenarios and the checker in CI, the shared Stripe fake, the README chart and throughput figure, and releasing the holds the real-Stripe suites leave open.
-   - **6b, observability** (Grafana Cloud free): OpenTelemetry traces across instances, the trace screenshot, metrics and alerts (each fired once), and the runbook. Alerts as code and drills on a local stack (Dan).
+   - **6b, observability** (Grafana Cloud free): OpenTelemetry traces across instances, the trace picture, metrics and alerts (each fired once), and the runbook. Alerts as code and drills on a local stack (Dan).
 7. **Demo polish:** README GIF and chart, soft close if there's time, and case-study notes.
 
 ## 13. Open questions (settle before slice 1 unless noted)

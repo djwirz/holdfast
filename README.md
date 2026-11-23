@@ -14,6 +14,14 @@ Two hundred bidders sent 3,000 bids at one auction in about 74 seconds, through 
 
 Throughput, honestly: the run peaked at about 110 bids a second (55 in the busiest half second), with a median response of about 320ms and a 95th percentile of about 530ms. Most of that time is the simulated card hold, which takes 150–500ms (ADR 0006: load runs use a Stripe fake, since Stripe's test mode allows about 25 requests a second). The bids are paced to straddle the auction's end, so this is a correctness test under heavy contention, not a measurement of the ceiling. CI runs a smaller storm with the same checker on every PR.
 
+## One bid, traced
+
+![One production bid's trace as a waterfall: the request, the card hold, the locked decision, the outbid hold's release and the live update, across both replicas](docs/trace.svg)
+
+A real bid on the deployed demo, drawn from its trace in Grafana Cloud. One replica takes the request: it claims the bid, places the card hold at Stripe (about half a second, most of the request), and decides it under the auction's row lock in about 20ms. Then its outbox releases the outbid bidder's hold and publishes the change. The trace context travels inside the outbox row and the Redis message, so the fan-out on the other replica lands in the same trace, as does the write down the open live connection. `node scripts/trace-chart.ts <trace id>` redraws it from any trace.
+
+Alerts watch for the failures a trace alone wouldn't catch: card holds with no live bid behind them (read from Stripe, not our own records), outbox work that gave up, and winners never charged. Each has a [runbook](docs/runbook.md) and has been fired once on purpose.
+
 ## Local development
 
 Needs Node.js 26 (see `.nvmrc`), corepack, and Docker.

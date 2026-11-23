@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 516" width="760" height="516" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="One bid's trace across 2 replicas: POST /api/auctions/:id/bids, bid.claim, payments.authorize, POST api.stripe.com, bid.decide, outbox.cancel_hold, POST api.stripe.com, outbox.publish, live.fanout, live.fanout, sse.write">
+<rect width="760" height="516" fill="#ffffff"/>
+<text x="16" y="26" font-size="16" font-weight="600" fill="#1c1b19">One production bid, traced across both replicas</text>
+<text x="16" y="46" font-size="12" fill="#4a4843">2026-11-22 23:52 UTC · 876ms from request to live update · 51 spans in one trace (database, Redis and framework spans not drawn)</text>
+<line x1="340.0" y1="72" x2="340.0" y2="452" stroke="#e4e2dc"/>
+<text x="340.0" y="68" font-size="11" text-anchor="middle" fill="#4a4843">0ms</text>
+<line x1="414.0" y1="72" x2="414.0" y2="452" stroke="#e4e2dc"/>
+<text x="414.0" y="68" font-size="11" text-anchor="middle" fill="#4a4843">200ms</text>
+<line x1="487.9" y1="72" x2="487.9" y2="452" stroke="#e4e2dc"/>
+<text x="487.9" y="68" font-size="11" text-anchor="middle" fill="#4a4843">400ms</text>
+<line x1="561.9" y1="72" x2="561.9" y2="452" stroke="#e4e2dc"/>
+<text x="561.9" y="68" font-size="11" text-anchor="middle" fill="#4a4843">600ms</text>
+<line x1="635.8" y1="72" x2="635.8" y2="452" stroke="#e4e2dc"/>
+<text x="635.8" y="68" font-size="11" text-anchor="middle" fill="#4a4843">800ms</text>
+<text x="16" y="91" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">POST /api/auctions/:id/bids</text>
+<text x="16" y="105" font-size="11" fill="#6b6862">the request</text>
+<rect x="340.0" y="88" width="223.7" height="14" rx="2" fill="#3d6fb5"><title>POST /api/auctions/:id/bids: 605ms on replica A</title></rect>
+<text x="567.7" y="99" font-size="11" fill="#4a4843">605ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="28" y="125" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bid.claim</text>
+<text x="28" y="139" font-size="11" fill="#6b6862">idempotency key, rate limit, pending row</text>
+<rect x="348.9" y="122" width="5.9" height="14" rx="2" fill="#3d6fb5"><title>bid.claim: 16ms on replica A</title></rect>
+<text x="358.7" y="133" font-size="11" fill="#4a4843">16ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="28" y="159" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">payments.authorize</text>
+<text x="28" y="173" font-size="11" fill="#6b6862">card hold at Stripe</text>
+<rect x="355.2" y="156" width="198.5" height="14" rx="2" fill="#3d6fb5"><title>payments.authorize: 537ms on replica A</title></rect>
+<text x="557.6" y="167" font-size="11" fill="#4a4843">537ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="40" y="193" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">POST api.stripe.com</text>
+<text x="40" y="207" font-size="11" fill="#6b6862">/v1/payment_intents</text>
+<rect x="356.6" y="190" width="196.6" height="14" rx="2" fill="#3d6fb5"><title>POST: 532ms on replica A</title></rect>
+<text x="557.3" y="201" font-size="11" fill="#4a4843">532ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="28" y="227" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bid.decide</text>
+<text x="28" y="241" font-size="11" fill="#6b6862">row lock, rules, commit: accepted</text>
+<rect x="556.0" y="224" width="7.2" height="14" rx="2" fill="#3d6fb5"><title>bid.decide: 19ms on replica A</title></rect>
+<text x="567.2" y="235" font-size="11" fill="#4a4843">19ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="40" y="261" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">outbox.cancel_hold</text>
+<text x="40" y="275" font-size="11" fill="#6b6862">release the outbid bidder's hold</text>
+<rect x="585.5" y="258" width="75.0" height="14" rx="2" fill="#3d6fb5"><title>outbox.cancel_hold: 203ms on replica A</title></rect>
+<text x="664.5" y="269" font-size="11" fill="#4a4843">203ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="52" y="295" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">POST api.stripe.com</text>
+<text x="52" y="309" font-size="11" fill="#6b6862">/v1/payment_intents/pi_…/cancel</text>
+<rect x="586.3" y="292" width="72.8" height="14" rx="2" fill="#3d6fb5"><title>POST: 197ms on replica A</title></rect>
+<text x="663.1" y="303" font-size="11" fill="#4a4843">197ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="40" y="329" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">outbox.publish</text>
+<text x="40" y="343" font-size="11" fill="#6b6862">Redis doorbell to every replica</text>
+<rect x="660.6" y="326" width="2.3" height="14" rx="2" fill="#3d6fb5"><title>outbox.publish: 6.1ms on replica A</title></rect>
+<text x="666.9" y="337" font-size="11" fill="#4a4843">6.1ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="52" y="363" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">live.fanout</text>
+<text x="52" y="377" font-size="11" fill="#6b6862">read the change, notify open streams</text>
+<rect x="662.1" y="360" width="2.0" height="14" rx="2" fill="#3d6fb5"><title>live.fanout: 4.8ms on replica A</title></rect>
+<text x="668.1" y="371" font-size="11" fill="#4a4843">4.8ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<text x="52" y="397" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">live.fanout</text>
+<text x="52" y="411" font-size="11" fill="#6b6862">read the change, notify open streams</text>
+<rect x="662.8" y="394" width="2.0" height="14" rx="2" fill="#d08a16"><title>live.fanout: 0.1ms on replica B</title></rect>
+<text x="668.8" y="405" font-size="11" fill="#4a4843">0.1ms · <tspan fill="#d08a16" font-weight="600">B</tspan></text>
+<text x="64" y="431" font-size="12" fill="#1c1b19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">sse.write</text>
+<text x="64" y="445" font-size="11" fill="#6b6862">push to an open browser</text>
+<rect x="663.9" y="428" width="2.0" height="14" rx="2" fill="#3d6fb5"><title>sse.write: 0.2ms on replica A</title></rect>
+<text x="669.9" y="439" font-size="11" fill="#4a4843">0.2ms · <tspan fill="#3d6fb5" font-weight="600">A</tspan></text>
+<rect x="16" y="472" width="12" height="12" rx="2" fill="#3d6fb5"/>
+<text x="34" y="482" font-size="12" fill="#1c1b19">Replica A (took the request)</text>
+<rect x="266" y="472" width="12" height="12" rx="2" fill="#d08a16"/>
+<text x="284" y="482" font-size="12" fill="#1c1b19">Replica B</text>
+<text x="16" y="504" font-size="11" fill="#6b6862">Drawn by scripts/trace-chart.ts from trace db3fecb5920077b5493ffd1a3df66cfd in Grafana Cloud (Tempo).</text>
+</svg>
