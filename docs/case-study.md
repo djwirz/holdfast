@@ -1,6 +1,6 @@
 # Case study: Holdfast
 
-Holdfast is a live auction site where a bid counts only once a card hold covers it. This is what it set out to prove, how it's built, the evidence that it works, and how it was made: by Dan with Claude Code, in the open, including where the AI got it wrong.
+Holdfast is a live auction site where a bid counts only once a card hold covers it. This is what it set out to prove, how it's built, the evidence that it works, and how it was made, including what went wrong.
 
 ## The problem and the claim
 
@@ -25,25 +25,25 @@ Holdfast's claim is narrow and testable: **a bid is accepted only after a Stripe
 - **Two people, two browsers.** The [README's GIF](../README.md) is recorded by a script against two server instances and real Stripe test mode, and the run fails unless Stripe's own record shows every losing hold released and the winner's captured.
 - **Deployed from `main` only,** with a smoke test after every deploy ([deploy notes](deploy.md)).
 
-## How AI was used
+## How it was built
 
-Claude Code wrote nearly all of the code and docs. Dan directed it and made the decisions.
+AI-assisted with Claude Code. Dan owned the design, decisions and review.
 
 - **Spec first.** The spec, the artifact spec and the first six ADRs came before any code, and were reviewed by a fresh-context pass that found real holes in the first draft.
 - **One thin slice per pull request:** ten slices, this last one included, plus the spec and one rule change. Each began in plan mode with a written plan that said which invariant, failure mode or acceptance criterion justified anything new. Dan approved the plan, answered the open choices, and merged the result.
 - **Dan's decisions are on record** in the spec and ADRs: splitting slices in two where they grew, open sign-in with rate limits, Railway over the spec's first pick, alerts as code, drills on a local stack, a drawn trace picture instead of a screenshot, demo auctions in rounds.
-- **Every pull request says what the AI got wrong.** The next section gathers them.
+- **Every pull request says what went wrong.** The next section gathers them.
 
-## Where AI was wrong
+## What went wrong
 
 Grouped by kind, with how each was caught.
 
 **Wrong about the outside world.** These are the mistakes tests written from the same assumptions can't catch.
-- It assumed a Stripe idempotency key always replays the original result. Stripe's docs say a `500` is saved and replayed for a day, and a concurrent request gets `409`. The reconciler would have left bids pending for a day. *Caught by reading the docs in the real-Stripe slice;* the fake now models both, and a teeth check fails without the fix.
-- It assumed Drizzle's raw queries return timestamps as dates; they return strings, and every bid failed at first. *Caught by tests.*
-- It assumed Node 26 container images still ship corepack. *Caught by the first Docker build.*
-- It used Stripe's Payment Element, which offered bank debits and wallets that can't carry an off-session hold. *Caught by the by-hand real-card run;* the fake-mode tests had no card step to catch it.
-- It assumed Railway's config-as-code file applies to a new service. It didn't, so migrations never ran on the first deploys. *Caught in production;* deploy settings moved to Railway's infrastructure-as-code file.
+- Assumed a Stripe idempotency key always replays the original result. Stripe's docs say a `500` is saved and replayed for a day, and a concurrent request gets `409`. The reconciler would have left bids pending for a day. *Caught by reading the docs in the real-Stripe slice;* the fake now models both, and a teeth check fails without the fix.
+- Assumed Drizzle's raw queries return timestamps as dates; they return strings, and every bid failed at first. *Caught by tests.*
+- Assumed Node 26 container images still ship corepack. *Caught by the first Docker build.*
+- Used Stripe's Payment Element, which offered bank debits and wallets that can't carry an off-session hold. *Caught by the by-hand real-card run;* the fake-mode tests had no card step to catch it.
+- Assumed Railway's config-as-code file applies to a new service. It didn't, so migrations never ran on the first deploys. *Caught in production;* deploy settings moved to Railway's infrastructure-as-code file.
 - The spec's own hosting pick (Fly.io with Neon and Upstash) couldn't meet the budget-alarm rule. *Caught by checking current facts before deploying.*
 
 **Tests that passed for the wrong reason.**
@@ -59,17 +59,17 @@ Grouped by kind, with how each was caught.
 - Every Stripe call was traced twice, and each replica started a stray trace every thirty seconds. *Caught by reading the first production trace.*
 
 **Operational slips.**
-- It pushed a commit before reading the secret scan, which had flagged a made-up key in a test. A force-push was rightly refused; follow-up commits and a reviewed ignore entry fixed it.
-- It ran a formatter over the merged ADRs, which must never change. *Caught before pushing;* Markdown is now excluded.
-- A placeholder in its own setup instructions (an endpoint with a literal "…") was copied into the env files, and its check of those files only looked at the prefix and suffix. A whole drill ran with no telemetry and no error. *Caught by the drill timing out;* the scripts now refuse anything that isn't a real gateway address.
-- It filled the disk once with a Homebrew build from source and once with Docker build cache, until Docker hung. *Caught by the failures they caused;* cleaned up with Dan's OK.
+- Pushed a commit before reading the secret scan, which had flagged a made-up key in a test. A force-push was rightly refused; follow-up commits and a reviewed ignore entry fixed it.
+- Ran a formatter over the merged ADRs, which must never change. *Caught before pushing;* Markdown is now excluded.
+- A placeholder in the setup instructions (an endpoint with a literal "…") was copied into the env files, and the check of those files only looked at the prefix and suffix. A whole drill ran with no telemetry and no error. *Caught by the drill timing out;* the scripts now refuse anything that isn't a real gateway address.
+- Filled the disk once with a Homebrew build from source and once with Docker build cache, until Docker hung. *Caught by the failures they caused;* cleaned up with Dan's OK.
 
 **Where Dan corrected the approach.**
 - The first spec gated the project on a skills score. Dan dropped it: the project is justified by its problem, and "problem first" became the rule every plan has to meet.
 - Early deploy instructions had Dan move secret values by hand. Dan asked why not use the command line; since then every secret goes through scripts that print variable names only.
 - The trace screenshot was a manual step whose point wasn't clear. Dan asked for another way; the picture is now drawn from the trace data and can be redrawn from any trace id.
 
-The pattern is consistent. The AI's mistakes clustered where its knowledge of an outside system was stale or assumed, and where a test could pass without exercising anything. The defences that worked were the ones built in on purpose: checking current docs before relying on them, non-triviality checks in every test that could pass vacuously, a teeth check for every guard (remove the fix, watch the test fail), and a by-hand run against the real service where fakes can't see.
+The pattern is consistent. The mistakes clustered where knowledge of an outside system was stale or assumed, and where a test could pass without exercising anything. The defences that worked were the ones built in on purpose: checking current docs before relying on them, non-triviality checks in every test that could pass vacuously, a teeth check for every guard (remove the fix, watch the test fail), and a by-hand run against the real service where fakes can't see.
 
 ## What's next
 
