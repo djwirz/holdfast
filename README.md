@@ -8,7 +8,7 @@ Two bidders, two browsers, two server instances, real Stripe test-mode card hold
 
 **Live demo:** https://holdfast-production-ba968615.up.railway.app (Stripe test mode: use card 4242 4242 4242 4242; no real money moves). The demo auctions run in rounds, so one is always open.
 
-**Status:** v1 is complete: every acceptance criterion in [spec §11](docs/spec.md#11-acceptance-criteria-v1-done-depth-3) is met. Deployed on Railway with two replicas ([docs/deploy.md](docs/deploy.md)), traced and alerted ([docs/runbook.md](docs/runbook.md)). Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). How it was built with Claude Code, and where the AI was wrong: [docs/case-study.md](docs/case-study.md).
+**Status:** v1 is complete: every acceptance criterion in [spec §11](docs/spec.md#11-acceptance-criteria-v1-done-depth-3) is met. Deployed on Railway with two replicas ([docs/deploy.md](docs/deploy.md)), traced and alerted ([docs/runbook.md](docs/runbook.md)). Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/). How it was built: [docs/case-study.md](docs/case-study.md).
 
 ## Correct under load
 
